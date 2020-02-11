@@ -25,7 +25,7 @@ if(USE_GPU_NEIGHBORHOOD_SEARCH)
 	   Ext_NeighborhoodSearch
 	   PREFIX "${CMAKE_SOURCE_DIR}/extern/cuNSearch"
 	   GIT_REPOSITORY https://github.com/RoBaumgartner/cuNSearch.git
-	   GIT_TAG "88f4bcfadc47244bdc70c9ec8b82a7330dfca4a1"
+	   GIT_TAG "70a6549e833fafb5e575f1b89f8ca7990d76e21f"
 	   INSTALL_DIR ${ExternalInstallDir}/NeighborhoodSearch
 	   CMAKE_ARGS
 		 -DCMAKE_BUILD_TYPE=${EXT_CMAKE_BUILD_TYPE}
