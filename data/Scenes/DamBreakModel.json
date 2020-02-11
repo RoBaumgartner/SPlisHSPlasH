@@ -19,7 +19,8 @@
 		"velocityUpdateMethod": 0,
 		"enableDivergenceSolver": true,
 		"particleAttributes": "density;velocity",
-		"boundaryHandlingMethod": 2
+		"boundaryHandlingMethod": 0,
+		"stopAt": 10
 	},
 	"Fluid":
 	{

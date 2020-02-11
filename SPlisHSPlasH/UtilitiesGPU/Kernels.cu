@@ -136,7 +136,7 @@ Vector3r gradKernelWeight(const Vector3r &rin, const Real m_radius)
 
 __device__
 void addForce(const Vector3r &pos, const Vector3r &f, /* output */ Vector3r* const forcesPerThread, /* output */ Vector3r* const torquesPerThread, 
-	const Vector3r* const rigidBodyPositions, const uint* const forcesPerThreadIndices, const uint* const torquesPerThreadIndices, const uint index, const int id)
+	const Vector3r* const rigidBodyPositions, const cuNSearch::uint* const forcesPerThreadIndices, const cuNSearch::uint* const torquesPerThreadIndices, const cuNSearch::uint index, const int id)
 {
 	#ifdef _OPENMP
 	int tid = id;
@@ -149,13 +149,13 @@ void addForce(const Vector3r &pos, const Vector3r &f, /* output */ Vector3r* con
 
 
 __global__
-void computeDensitiesGPU(/*out*/ Real* const densities, const Real* const volumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, 
-	const uint* const fmIndices, const Real* const densities0, const Real W_zero, const KernelData* const kernelData, 
-	/*start of forall-parameters*/ double3** particles, uint** neighbors, uint** neighborCounts, uint** neighborOffsets, 
-  uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles)
+void computeDensitiesGPU(/*out*/ Real* const densities, const Real* const volumes, const Real* const boundaryVolumes, const cuNSearch::uint* const boundaryVolumeIndices, 
+	const cuNSearch::uint* const fmIndices, const Real* const densities0, const Real W_zero, const KernelData* const kernelData, 
+	/*start of forall-parameters*/ double3** particles, cuNSearch::uint** neighbors, cuNSearch::uint** neighborCounts, cuNSearch::uint** neighborOffsets, 
+  cuNSearch::uint* neighborPointsetIndices, const cuNSearch::uint nFluids, const cuNSearch::uint nPointSets, const cuNSearch::uint fluidModelIndex, const cuNSearch::uint numParticles)
 {
  	// Boundary: Akinci2012
-	const uint i = blockIdx.x * blockDim.x + threadIdx.x;
+	const cuNSearch::uint i = blockIdx.x * blockDim.x + threadIdx.x;
 
 	if(i >= numParticles)
 		return;
@@ -170,9 +170,19 @@ void computeDensitiesGPU(/*out*/ Real* const densities, const Real* const volume
 	//////////////////////////////////////////////////////////////////////////
 	// Fluid
 	//////////////////////////////////////////////////////////////////////////
-	forall_fluid_neighborsGPU(
-		density += volumes[pid] * kernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData);
-	)
+	//forall_fluid_neighborsGPU(
+	//	density += volumes[pid] * kernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData);
+	//)
+	for (cuNSearch::uint pid = 0; pid < nFluids; pid++) 
+	{ 
+		const cuNSearch::uint neighborsetIndex = neighborPointsetIndices[fluidModelIndex] + pid; 
+		for (cuNSearch::uint j = 0; j < neighborCounts[neighborsetIndex][i]; j++) 
+		{ 
+			const cuNSearch::uint neighborIndex = neighbors[neighborsetIndex][neighborOffsets[neighborsetIndex][i] + j]; 
+			const double3 &xj = particles[pid][neighborIndex]; 
+			density += volumes[pid] * kernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData);
+		} 
+	}
 	
 
 	//////////////////////////////////////////////////////////////////////////
@@ -193,7 +203,7 @@ void computeDensitiesGPU(/*out*/ Real* const densities, const Real* const volume
 //////////////////////////////////////////////////////////////////
 
 __global__
-void clearAccelerationsGPU(Real* masses, Vector3r* accelerations, const Vector3r grav, const uint numActiveParticles)
+void clearAccelerationsGPU(Real* masses, Vector3r* accelerations, const Vector3r grav, const cuNSearch::uint numActiveParticles)
 {
  	int i = blockIdx.x*blockDim.x + threadIdx.x;
 
@@ -209,8 +219,8 @@ void clearAccelerationsGPU(Real* masses, Vector3r* accelerations, const Vector3r
 }
 
 __global__
-void updatePressureGPU(Real* const densities, const uint* const fmIndices, Real* const pressures, const Real* const densities0, const Real m_stiffness, const Real m_exponent,
-	const uint fluidModelIndex, const uint numParticles)
+void updatePressureGPU(Real* const densities, const cuNSearch::uint* const fmIndices, Real* const pressures, const Real* const densities0, const Real m_stiffness, const Real m_exponent,
+	const cuNSearch::uint fluidModelIndex, const cuNSearch::uint numParticles)
 {
 	int i = blockIdx.x*blockDim.x + threadIdx.x;
 
@@ -223,13 +233,13 @@ void updatePressureGPU(Real* const densities, const uint* const fmIndices, Real*
 }
 
 __global__
-void computePressureAccelsGPU( /* output */ Vector3r* const pressureAccels, /* output */ Vector3r* const forcesPerThread, /* output */ Vector3r* const torquesPerThread, const uint* const forcesPerThreadIndices, 
-	const uint* const torquesPerThreadIndices, const Real* const densities, const Real* const densities0, const uint* const fmIndices, const Real* const pressures, const Real* const masses, 
-	const Vector3r* const rigidBodyPositions, const Real* const volumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, const bool* const isDynamic, const int tid, const KernelData* kernelData,
-	/*start of forall-parameters*/ double3** particles, uint** neighbors, uint** neighborCounts, uint** neighborOffsets, 
-  uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles)
+void computePressureAccelsGPU( /* output */ Vector3r* const pressureAccels, /* output */ Vector3r* const forcesPerThread, /* output */ Vector3r* const torquesPerThread, const cuNSearch::uint* const forcesPerThreadIndices, 
+	const cuNSearch::uint* const torquesPerThreadIndices, const Real* const densities, const Real* const densities0, const cuNSearch::uint* const fmIndices, const Real* const pressures, const Real* const masses, 
+	const Vector3r* const rigidBodyPositions, const Real* const volumes, const Real* const boundaryVolumes, const cuNSearch::uint* const boundaryVolumeIndices, const bool* const isDynamic, const int tid, const KernelData* kernelData,
+	/*start of forall-parameters*/ double3** particles, cuNSearch::uint** neighbors, cuNSearch::uint** neighborCounts, cuNSearch::uint** neighborOffsets, 
+  cuNSearch::uint* neighborPointsetIndices, const cuNSearch::uint nFluids, const cuNSearch::uint nPointSets, const cuNSearch::uint fluidModelIndex, const cuNSearch::uint numParticles)
 {
-   const uint i = blockIdx.x*blockDim.x + threadIdx.x;
+   const cuNSearch::uint i = blockIdx.x*blockDim.x + threadIdx.x;
 
 	if(i >= numParticles)
 		return;
@@ -271,7 +281,7 @@ void computePressureAccelsGPU( /* output */ Vector3r* const pressureAccels, /* o
 
 __global__ 
 void updatePosPressureAccelPressureAccel(Vector3r* const positions, Vector3r* const velocities, Vector3r* const accelerations,
-	const Vector3r* const pressureAccels, const Real h, const uint numParticles)
+	const Vector3r* const pressureAccels, const Real h, const cuNSearch::uint numParticles)
 {
 	int i = blockIdx.x*blockDim.x + threadIdx.x;
 
@@ -290,10 +300,10 @@ void updatePosPressureAccelPressureAccel(Vector3r* const positions, Vector3r* co
 //////////////////////////////////////////////////////////////////
 
 __global__ 
-void computeDFSPHFactors(/* out */ Real* factors, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, const KernelData* const kernelData, 
+void computeDFSPHFactors(/* out */ Real* factors, const Real* const boundaryVolumes, const cuNSearch::uint* const boundaryVolumeIndices, const KernelData* const kernelData, 
 	const unsigned int* fmIndices, const Real* fmVolumes, const Real eps,
-	/*start of forall-parameters*/ double3** particles, uint** neighbors, uint** neighborCounts, uint** neighborOffsets, 
-  uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles)
+	/*start of forall-parameters*/ double3** particles, cuNSearch::uint** neighbors, cuNSearch::uint** neighborCounts, cuNSearch::uint** neighborOffsets, 
+  cuNSearch::uint* neighborPointsetIndices, const cuNSearch::uint nFluids, const cuNSearch::uint nPointSets, const cuNSearch::uint fluidModelIndex, const cuNSearch::uint numParticles)
 {
 	int i = blockIdx.x*blockDim.x + threadIdx.x;
 	if(i >= numParticles)
@@ -341,10 +351,10 @@ forall_fluid_neighborsGPU(
 
 
  __global__
-void computeDensityChanges(/*out*/ Real* const densitiesAdv, const Vector3r* const fmVelocities, const Vector3r* const bmVelocities, const uint* const fmIndices, 
-	const Real* const fmVolumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, const KernelData* const kernelData,
-	/*start of forall-parameters*/ double3** particles, uint** neighbors, uint** neighborCounts, uint** neighborOffsets, 
-  uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles)
+void computeDensityChanges(/*out*/ Real* const densitiesAdv, const Vector3r* const fmVelocities, const Vector3r* const bmVelocities, const cuNSearch::uint* const fmIndices, 
+	const Real* const fmVolumes, const Real* const boundaryVolumes, const cuNSearch::uint* const boundaryVolumeIndices, const KernelData* const kernelData,
+	/*start of forall-parameters*/ double3** particles, cuNSearch::uint** neighbors, cuNSearch::uint** neighborCounts, cuNSearch::uint** neighborOffsets, 
+  cuNSearch::uint* neighborPointsetIndices, const cuNSearch::uint nFluids, const cuNSearch::uint nPointSets, const cuNSearch::uint fluidModelIndex, const cuNSearch::uint numParticles)
 {
 	int i = blockIdx.x*blockDim.x + threadIdx.x;
 	if(i >= numParticles)
@@ -378,7 +388,7 @@ void computeDensityChanges(/*out*/ Real* const densitiesAdv, const Vector3r* con
 
 	for (unsigned int pid = 0; pid < nPointSets; pid++)
 	{
-		const uint neighborsetIndex = neighborPointsetIndices[fluidModelIndex] + pid;
+		const cuNSearch::uint neighborsetIndex = neighborPointsetIndices[fluidModelIndex] + pid;
 		numNeighbors += neighborCounts[neighborsetIndex][i];
 	}
 
@@ -388,10 +398,10 @@ void computeDensityChanges(/*out*/ Real* const densitiesAdv, const Vector3r* con
 }
 
 __global__
-void computeDensityAdvs(/*out*/ Real* const densitiesAdv, const Real* const fmDensities, const Vector3r* const fmVelocities, const Vector3r* const bmVelocities, const uint* const fmIndices, 
-	const Real* const fmVolumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, const Real* const densities0, const Real h, const KernelData* const kernelData,
-	/*start of forall-parameters*/ double3** particles, uint** neighbors, uint** neighborCounts, uint** neighborOffsets, 
-  uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles)
+void computeDensityAdvs(/*out*/ Real* const densitiesAdv, const Real* const fmDensities, const Vector3r* const fmVelocities, const Vector3r* const bmVelocities, const cuNSearch::uint* const fmIndices, 
+	const Real* const fmVolumes, const Real* const boundaryVolumes, const cuNSearch::uint* const boundaryVolumeIndices, const Real* const densities0, const Real h, const KernelData* const kernelData,
+	/*start of forall-parameters*/ double3** particles, cuNSearch::uint** neighbors, cuNSearch::uint** neighborCounts, cuNSearch::uint** neighborOffsets, 
+  cuNSearch::uint* neighborPointsetIndices, const cuNSearch::uint nFluids, const cuNSearch::uint nPointSets, const cuNSearch::uint fluidModelIndex, const cuNSearch::uint numParticles)
 {
 	int i = blockIdx.x*blockDim.x + threadIdx.x;
 	if(i >= numParticles)
@@ -424,7 +434,7 @@ void computeDensityAdvs(/*out*/ Real* const densitiesAdv, const Real* const fmDe
 }
 
 __global__
-void warmstartDivergenceSolveKappaV(/*out*/ Real* const kappaV, const uint* const fmIndices, const Real* const densities0, const Real invH, const uint fluidModelIndex, const uint numParticles)
+void warmstartDivergenceSolveKappaV(/*out*/ Real* const kappaV, const cuNSearch::uint* const fmIndices, const Real* const densities0, const Real invH, const cuNSearch::uint fluidModelIndex, const cuNSearch::uint numParticles)
 {
 	int i = blockIdx.x*blockDim.x + threadIdx.x;
 	if(i >= numParticles)
@@ -435,11 +445,11 @@ void warmstartDivergenceSolveKappaV(/*out*/ Real* const kappaV, const uint* cons
 
 __global__
 void divergenceSolveWarmstart( /*out*/ Vector3r* const fmVelocities, /* output */ Vector3r* const forcesPerThread, /* output */ Vector3r* const torquesPerThread, 
-	const uint* const forcesPerThreadIndices, const uint* const torquesPerThreadIndices, const Vector3r* const rigidBodyPositions, const Real* const kappaV,
-	const uint* const fmIndices, const Real* const masses, const Real* const fmVolumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, 
+	const cuNSearch::uint* const forcesPerThreadIndices, const cuNSearch::uint* const torquesPerThreadIndices, const Vector3r* const rigidBodyPositions, const Real* const kappaV,
+	const cuNSearch::uint* const fmIndices, const Real* const masses, const Real* const fmVolumes, const Real* const boundaryVolumes, const cuNSearch::uint* const boundaryVolumeIndices, 
 	const Real* const densities0, const bool* const isDynamic, const int tid, const Real h, const KernelData* const kernelData, const Real eps,
-	/*start of forall-parameters*/ double3** particles, uint** neighbors, uint** neighborCounts, uint** neighborOffsets, 
-  uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles)
+	/*start of forall-parameters*/ double3** particles, cuNSearch::uint** neighbors, cuNSearch::uint** neighborCounts, cuNSearch::uint** neighborOffsets, 
+  cuNSearch::uint* neighborPointsetIndices, const cuNSearch::uint nFluids, const cuNSearch::uint nPointSets, const cuNSearch::uint fluidModelIndex, const cuNSearch::uint numParticles)
 {
 	int i = blockIdx.x*blockDim.x + threadIdx.x;
 	if(i >= numParticles || numParticles == 0)
@@ -481,7 +491,7 @@ void divergenceSolveWarmstart( /*out*/ Vector3r* const fmVelocities, /* output *
 
 
 __global__
-void multiplyRealWithConstant(/*out*/ Real* const input, const uint* const fmIndices, const Real f, const uint fluidModelIndex, const uint numParticles)
+void multiplyRealWithConstant(/*out*/ Real* const input, const cuNSearch::uint* const fmIndices, const Real f, const cuNSearch::uint fluidModelIndex, const cuNSearch::uint numParticles)
 {
 	int i = blockIdx.x*blockDim.x + threadIdx.x;
 	if(i >= numParticles)
@@ -491,7 +501,7 @@ void multiplyRealWithConstant(/*out*/ Real* const input, const uint* const fmInd
 }
 
 __global__
-void setRealToZero(/*out*/ Real* const input, const uint* const fmIndices, const uint fluidModelIndex, const uint numParticles)
+void setRealToZero(/*out*/ Real* const input, const cuNSearch::uint* const fmIndices, const cuNSearch::uint fluidModelIndex, const cuNSearch::uint numParticles)
 {
 	int i = blockIdx.x*blockDim.x + threadIdx.x;
 	if(i >= numParticles)
@@ -502,11 +512,11 @@ void setRealToZero(/*out*/ Real* const input, const uint* const fmIndices, const
 
 __global__ 
 void divergenceSolveUpdateFluidVelocities( /*out*/ Vector3r* const fmVelocities, /*out*/ Real* const kappaV, /* output */ Vector3r* const forcesPerThread, /* output */ Vector3r* const torquesPerThread, 
-	const uint* const forcesPerThreadIndices, const uint* const torquesPerThreadIndices, const Vector3r* const rigidBodyPositions, const Real* const densitiesAdv, const Real* const factors, 
-	const uint* const fmIndices, const Real* const masses, const Real* const fmVolumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, 
+	const cuNSearch::uint* const forcesPerThreadIndices, const cuNSearch::uint* const torquesPerThreadIndices, const Vector3r* const rigidBodyPositions, const Real* const densitiesAdv, const Real* const factors, 
+	const cuNSearch::uint* const fmIndices, const Real* const masses, const Real* const fmVolumes, const Real* const boundaryVolumes, const cuNSearch::uint* const boundaryVolumeIndices, 
 	const Real* const densities0, const bool* const isDynamic, const int tid, const Real h, const Real invH, const KernelData* const kernelData, const Real eps,
-	/*start of forall-parameters*/ double3** particles, uint** neighbors, uint** neighborCounts, uint** neighborOffsets, 
-	uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles)
+	/*start of forall-parameters*/ double3** particles, cuNSearch::uint** neighbors, cuNSearch::uint** neighborCounts, cuNSearch::uint** neighborOffsets, 
+	cuNSearch::uint* neighborPointsetIndices, const cuNSearch::uint nFluids, const cuNSearch::uint nPointSets, const cuNSearch::uint fluidModelIndex, const cuNSearch::uint numParticles)
 {
  	int i = blockIdx.x*blockDim.x + threadIdx.x;
 	if(i >= numParticles)
@@ -550,11 +560,11 @@ void divergenceSolveUpdateFluidVelocities( /*out*/ Vector3r* const fmVelocities,
 
 __global__ 
 void divergenceSolveUpdateFluidVelocities( /*out*/ Vector3r* const fmVelocities, /* output */ Vector3r* const forcesPerThread, /* output */ Vector3r* const torquesPerThread, 
-	const uint* const forcesPerThreadIndices, const uint* const torquesPerThreadIndices, const Vector3r* const rigidBodyPositions, const Real* const densitiesAdv, const Real* const factors, 
-	const uint* const fmIndices, const Real* const masses, const Real* const fmVolumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, 
+	const cuNSearch::uint* const forcesPerThreadIndices, const cuNSearch::uint* const torquesPerThreadIndices, const Vector3r* const rigidBodyPositions, const Real* const densitiesAdv, const Real* const factors, 
+	const cuNSearch::uint* const fmIndices, const Real* const masses, const Real* const fmVolumes, const Real* const boundaryVolumes, const cuNSearch::uint* const boundaryVolumeIndices, 
 	const Real* const densities0, const bool* const isDynamic, const int tid, const Real h, const Real invH, const KernelData* const kernelData, const Real eps,
-	/*start of forall-parameters*/ double3** particles, uint** neighbors, uint** neighborCounts, uint** neighborOffsets, 
-	uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles)
+	/*start of forall-parameters*/ double3** particles, cuNSearch::uint** neighbors, cuNSearch::uint** neighborCounts, cuNSearch::uint** neighborOffsets, 
+	cuNSearch::uint* neighborPointsetIndices, const cuNSearch::uint nFluids, const cuNSearch::uint nPointSets, const cuNSearch::uint fluidModelIndex, const cuNSearch::uint numParticles)
 {
  	int i = blockIdx.x*blockDim.x + threadIdx.x;
 	if(i >= numParticles)
@@ -597,11 +607,11 @@ void divergenceSolveUpdateFluidVelocities( /*out*/ Vector3r* const fmVelocities,
 
 __global__ 
 void pressureSolveUpdateFluidVelocities( /*out*/ Vector3r* const fmVelocities, /*out*/ Real* const kappa, /* output */ Vector3r* const forcesPerThread, /* output */ Vector3r* const torquesPerThread, 
-	const uint* const forcesPerThreadIndices, const uint* const torquesPerThreadIndices, const Vector3r* const rigidBodyPositions, const Real* const densitiesAdv, const Real* const factors, 
-	const uint* const fmIndices, const Real* const masses, const Real* const fmVolumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, 
+	const cuNSearch::uint* const forcesPerThreadIndices, const cuNSearch::uint* const torquesPerThreadIndices, const Vector3r* const rigidBodyPositions, const Real* const densitiesAdv, const Real* const factors, 
+	const cuNSearch::uint* const fmIndices, const Real* const masses, const Real* const fmVolumes, const Real* const boundaryVolumes, const cuNSearch::uint* const boundaryVolumeIndices, 
 	const Real* const densities0, const bool* const isDynamic, const int tid, const Real h, const Real invH, const KernelData* const kernelData, const Real eps,
-	/*start of forall-parameters*/ double3** particles, uint** neighbors, uint** neighborCounts, uint** neighborOffsets, 
-  uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles)
+	/*start of forall-parameters*/ double3** particles, cuNSearch::uint** neighbors, cuNSearch::uint** neighborCounts, cuNSearch::uint** neighborOffsets, 
+  cuNSearch::uint* neighborPointsetIndices, const cuNSearch::uint nFluids, const cuNSearch::uint nPointSets, const cuNSearch::uint fluidModelIndex, const cuNSearch::uint numParticles)
 {
  	int i = blockIdx.x*blockDim.x + threadIdx.x;
 	if(i >= numParticles)
@@ -646,11 +656,11 @@ void pressureSolveUpdateFluidVelocities( /*out*/ Vector3r* const fmVelocities, /
 
 __global__ 
 void pressureSolveUpdateFluidVelocities( /*out*/ Vector3r* const fmVelocities, /* output */ Vector3r* const forcesPerThread, /* output */ Vector3r* const torquesPerThread, 
-	const uint* const forcesPerThreadIndices, const uint* const torquesPerThreadIndices, const Vector3r* const rigidBodyPositions, const Real* const densitiesAdv, const Real* const factors, 
-	const uint* const fmIndices, const Real* const masses, const Real* const fmVolumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, 
+	const cuNSearch::uint* const forcesPerThreadIndices, const cuNSearch::uint* const torquesPerThreadIndices, const Vector3r* const rigidBodyPositions, const Real* const densitiesAdv, const Real* const factors, 
+	const cuNSearch::uint* const fmIndices, const Real* const masses, const Real* const fmVolumes, const Real* const boundaryVolumes, const cuNSearch::uint* const boundaryVolumeIndices, 
 	const Real* const densities0, const bool* const isDynamic, const int tid, const Real h, const Real invH, const KernelData* const kernelData, const Real eps,
-	/*start of forall-parameters*/ double3** particles, uint** neighbors, uint** neighborCounts, uint** neighborOffsets, 
-  uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles)
+	/*start of forall-parameters*/ double3** particles, cuNSearch::uint** neighbors, cuNSearch::uint** neighborCounts, cuNSearch::uint** neighborOffsets, 
+  cuNSearch::uint* neighborPointsetIndices, const cuNSearch::uint nFluids, const cuNSearch::uint nPointSets, const cuNSearch::uint fluidModelIndex, const cuNSearch::uint numParticles)
 {
  	int i = blockIdx.x*blockDim.x + threadIdx.x;
 	if(i >= numParticles)
@@ -692,8 +702,8 @@ void pressureSolveUpdateFluidVelocities( /*out*/ Vector3r* const fmVelocities, /
 } 
 
 __global__
-void updateDensityErrorDivergence(/*out*/ Real* const density_errors, const Real* const densitiesAdv, const Real* const densities0, const uint* const fmIndices,
-	const uint fluidModelIndex, const uint numParticles)
+void updateDensityErrorDivergence(/*out*/ Real* const density_errors, const Real* const densitiesAdv, const Real* const densities0, const cuNSearch::uint* const fmIndices,
+	const cuNSearch::uint fluidModelIndex, const cuNSearch::uint numParticles)
 {
 	int i = blockIdx.x*blockDim.x + threadIdx.x;
 	if(i >= numParticles)
@@ -704,7 +714,7 @@ void updateDensityErrorDivergence(/*out*/ Real* const density_errors, const Real
 }
 
 __global__
-void warmstartPressureSolveKappa(/*out*/ Real* kappa, const uint* const fmIndices, const Real* const densities0, const Real invH2, const uint fluidModelIndex, const uint numParticles)
+void warmstartPressureSolveKappa(/*out*/ Real* kappa, const cuNSearch::uint* const fmIndices, const Real* const densities0, const Real invH2, const cuNSearch::uint fluidModelIndex, const cuNSearch::uint numParticles)
 {
 	int i = blockIdx.x*blockDim.x + threadIdx.x;
 	if(i >= numParticles)
@@ -715,11 +725,11 @@ void warmstartPressureSolveKappa(/*out*/ Real* kappa, const uint* const fmIndice
 
 __global__
 void pressureSolveWarmstart(/*out*/ Vector3r* const fmVelocities , /* output */ Vector3r* const forcesPerThread, /* output */ Vector3r* const torquesPerThread, 
-	const uint* const forcesPerThreadIndices, const uint* const torquesPerThreadIndices, const Vector3r* const rigidBodyPositions,const Real* const kappa, 
-	const Real* const densitiesAdv, const Real* const masses, const Real* const fmVolumes, const uint* const fmIndices, const Real* const boundaryVolumes, 
-	const uint* const boundaryVolumeIndices, const Real* const densities0, const bool* const isDynamic, const int tid, const Real h, const Real eps, const KernelData* const kernelData,
-	/*start of forall-parameters*/ double3** particles, uint** neighbors, uint** neighborCounts, uint** neighborOffsets, 
-  uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles)
+	const cuNSearch::uint* const forcesPerThreadIndices, const cuNSearch::uint* const torquesPerThreadIndices, const Vector3r* const rigidBodyPositions,const Real* const kappa, 
+	const Real* const densitiesAdv, const Real* const masses, const Real* const fmVolumes, const cuNSearch::uint* const fmIndices, const Real* const boundaryVolumes, 
+	const cuNSearch::uint* const boundaryVolumeIndices, const Real* const densities0, const bool* const isDynamic, const int tid, const Real h, const Real eps, const KernelData* const kernelData,
+	/*start of forall-parameters*/ double3** particles, cuNSearch::uint** neighbors, cuNSearch::uint** neighborCounts, cuNSearch::uint** neighborOffsets, 
+  cuNSearch::uint* neighborPointsetIndices, const cuNSearch::uint nFluids, const cuNSearch::uint nPointSets, const cuNSearch::uint fluidModelIndex, const cuNSearch::uint numParticles)
 {
 	int i = blockIdx.x*blockDim.x + threadIdx.x;
 	if(i >= numParticles)
@@ -763,8 +773,8 @@ void pressureSolveWarmstart(/*out*/ Vector3r* const fmVelocities , /* output */ 
 }
 
 __global__
-void updateDensityErrorPressureSolve(/*out*/ Real* const density_error, const Real* const densitiesAdv, const Real* const densities0, const uint* const fmIndices,
-	const uint fluidModelIndex, const uint numParticles)
+void updateDensityErrorPressureSolve(/*out*/ Real* const density_error, const Real* const densitiesAdv, const Real* const densities0, const cuNSearch::uint* const fmIndices,
+	const cuNSearch::uint fluidModelIndex, const cuNSearch::uint numParticles)
 {
 	int i = blockIdx.x*blockDim.x + threadIdx.x;
 	if(i >= numParticles)

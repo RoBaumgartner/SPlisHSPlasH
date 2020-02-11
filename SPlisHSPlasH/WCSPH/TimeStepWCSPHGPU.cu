@@ -7,7 +7,7 @@
 #include "../Simulation.h"
 #include "SPlisHSPlasH/BoundaryModel_Akinci2012.h"
 
-#include "../../extern/cuNSearch/src/Ext_NeighborhoodSearch/src/PointSetImplementation.h"
+#include "PointSetImplementation.cuh"
 
 using namespace SPH;
 using namespace std;
@@ -325,7 +325,7 @@ void TimeStepWCSPHGPU::prepareData()
 	std::vector<cuNSearch::PointSet> &pointSets = sim->getCurrent()->getPointSets();
 
 	CudaHelper::CudaMalloc(&d_neighborPointsetIndices, nPointSets);
-	unsigned int neighborPointsetIndices_tmp[nPointSets];
+	std::vector<unsigned int> neighborPointsetIndices_tmp(nPointSets);
 
 	unsigned int neighborsetCount = 0;
 	for(int i = 0 ; i < nPointSets ; ++i)
@@ -334,7 +334,7 @@ void TimeStepWCSPHGPU::prepareData()
 		neighborsetCount += pointSets[i].n_neighborsets();	
 	}
 
-	CudaHelper::MemcpyHostToDevice(neighborPointsetIndices_tmp, d_neighborPointsetIndices, nPointSets);
+	CudaHelper::MemcpyHostToDevice(neighborPointsetIndices_tmp.data(), d_neighborPointsetIndices, nPointSets);
 
 	// flattened out the structures for efficiency
 	CudaHelper::CudaMalloc(&d_neighbors, neighborsetCount);
@@ -345,9 +345,9 @@ void TimeStepWCSPHGPU::prepareData()
 	{
 		const unsigned int nNeighborsets = pointSets[i].n_neighborsets();
 
-		uint* neighbors_tmp[nNeighborsets];
-		uint* neighborCounts_tmp[nNeighborsets];
-		uint* neighborOffsets_tmp[nNeighborsets];
+		std::vector<uint*> neighbors_tmp(nNeighborsets);
+		std::vector<uint*> neighborCounts_tmp(nNeighborsets);
+		std::vector<uint*> neighborOffsets_tmp(nNeighborsets);
 
 		for(int j = 0; j < nNeighborsets; j++)
 		{
@@ -356,9 +356,9 @@ void TimeStepWCSPHGPU::prepareData()
 			neighborOffsets_tmp[j] = pointSets[i].neighbor_offsets(j);
 		}
 
-		CudaHelper::MemcpyHostToDevice(neighbors_tmp, d_neighbors + neighborPointsetIndices_tmp[i], nNeighborsets);
-		CudaHelper::MemcpyHostToDevice(neighborCounts_tmp, d_neighborCounts + neighborPointsetIndices_tmp[i], nNeighborsets);
-		CudaHelper::MemcpyHostToDevice(neighborOffsets_tmp, d_neighborOffsets + neighborPointsetIndices_tmp[i], nNeighborsets);
+		CudaHelper::MemcpyHostToDevice(neighbors_tmp.data(), d_neighbors + neighborPointsetIndices_tmp[i], nNeighborsets);
+		CudaHelper::MemcpyHostToDevice(neighborCounts_tmp.data(), d_neighborCounts + neighborPointsetIndices_tmp[i], nNeighborsets);
+		CudaHelper::MemcpyHostToDevice(neighborOffsets_tmp.data(), d_neighborOffsets + neighborPointsetIndices_tmp[i], nNeighborsets);
 	}
 }
 

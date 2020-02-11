@@ -38,10 +38,10 @@ namespace SPH
 		KernelData *d_kernelData, kernelData;
 
 		thrust::device_vector<double3*> d_particles; // particle positions
-		uint **d_neighbors;
-		uint **d_neighborCounts;
-		uint **d_neighborOffsets;
-		uint *d_neighborPointsetIndices; // indexing the above
+		cuNSearch::uint **d_neighbors;
+		cuNSearch::uint **d_neighborCounts;
+		cuNSearch::uint **d_neighborOffsets;
+		cuNSearch::uint *d_neighborPointsetIndices; // indexing the above
 
 		thrust::device_vector<Real> d_volumes;
 		thrust::device_vector<Real> d_densities0; 
