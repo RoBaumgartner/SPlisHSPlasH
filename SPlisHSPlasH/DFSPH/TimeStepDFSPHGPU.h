@@ -37,7 +37,7 @@ namespace SPH
 
 		KernelData *d_kernelData, kernelData;
 
-		thrust::device_vector<double3*> d_particles; // particle positions
+		thrust::device_vector<Real3*> d_particles; // particle positions
 		cuNSearch::uint **d_neighbors;
 		cuNSearch::uint **d_neighborCounts;
 		cuNSearch::uint **d_neighborOffsets;
