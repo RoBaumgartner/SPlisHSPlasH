@@ -55,12 +55,13 @@ for (unsigned int pid = nFluids; pid < sim->numberOfPointSets(); pid++) \
 * constructGpuData must have been called before. outer_loop for computing indices needed for inner_loop. 
 */
 #define forall_fluid_neighborsGPU(code) \
-for(cuNSearch::uint pid = 0; pid < nFluids; pid++) \
+for(uint pid = 0; pid < nFluids; pid++) \
 { \
-	const cuNSearch::uint neighborsetIndex = neighborPointsetIndices[fluidModelIndex] + pid; \
-	for(cuNSearch::uint j = 0; j < neighborCounts[neighborsetIndex][i]; j++) \
+	__syncthreads(); \
+	const uint neighborsetIndex = neighborPointsetIndices[fluidModelIndex] + pid; \
+	for(uint j = 0; j < neighborCounts[neighborsetIndex][i]; j++) \
 	{ \
-		const cuNSearch::uint neighborIndex = neighbors[neighborsetIndex][neighborOffsets[neighborsetIndex][i] + j]; \
+		const uint neighborIndex = neighbors[neighborsetIndex][neighborOffsets[neighborsetIndex][i] + j]; \
 		const Real3 &xj = particles[pid][neighborIndex]; \
 		code \
 	} \
@@ -71,12 +72,13 @@ for(cuNSearch::uint pid = 0; pid < nFluids; pid++) \
 * constructGpuData must have been called before.
 */
 #define forall_boundary_neighborsGPU(code) \
-for (cuNSearch::uint pid = nFluids; pid < nPointSets; pid++) \
+for (uint pid = nFluids; pid < nPointSets; pid++) \
 { \
-	const cuNSearch::uint neighborsetIndex = neighborPointsetIndices[fluidModelIndex] + pid; \
+	__syncthreads(); \
+	const uint neighborsetIndex = neighborPointsetIndices[fluidModelIndex] + pid; \
 	for(unsigned int j = 0; j < neighborCounts[neighborsetIndex][i]; j++) \
 	{ \
-		const cuNSearch::uint neighborIndex = neighbors[neighborsetIndex][neighborOffsets[neighborsetIndex][i] + j]; \
+		const uint neighborIndex = neighbors[neighborsetIndex][neighborOffsets[neighborsetIndex][i] + j]; \
 		const Real3 &xj = particles[pid][neighborIndex]; \
 		code \
 	} \

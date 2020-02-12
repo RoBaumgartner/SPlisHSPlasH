@@ -58,6 +58,8 @@ namespace SPH
 		thrust::device_vector<Vector3r> d_torquesPerThread;
 		thrust::device_vector<unsigned int> d_forcesPerThreadIndices;
 		thrust::device_vector<unsigned int> d_torquesPerThreadIndices;
+
+		Real *d_density_error;
 		
 		unsigned int sumParticles;
 		

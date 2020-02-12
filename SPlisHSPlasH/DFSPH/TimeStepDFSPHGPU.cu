@@ -59,6 +59,16 @@ TimeStepDFSPHGPU::~TimeStepDFSPHGPU(void)
 	CudaHelper::CudaFree(d_neighborOffsets);
 	CudaHelper::CudaFree(d_neighborPointsetIndices); 
 
+#ifdef USE_WARMSTART
+	CudaHelper::CudaFree(d_kappa);
+#endif
+
+#ifdef USE_WARMSTART_V
+	CudaHelper::CudaFree(d_kappaV);
+#endif
+
+	CudaHelper::CudaFree(d_density_error);
+
 	Simulation *sim = Simulation::getCurrent();
 	const unsigned int nModels = sim->numberOfFluidModels();
 	for (unsigned int fluidModelIndex = 0; fluidModelIndex < nModels; fluidModelIndex++)
@@ -99,29 +109,75 @@ void TimeStepDFSPHGPU::initCUDA()
 { // sim init in static boundary simulator
 	Simulation *sim = Simulation::getCurrent();
 	const unsigned int nModels = sim->numberOfFluidModels();
+	const unsigned int nPointSets = sim->numberOfPointSets();
+	unsigned int sumOfAllFluidParticles = 0;
 
 	std::vector<cuNSearch::PointSet> &pointSets = sim->getCurrent()->getPointSets();
 	d_particles.resize(pointSets.size());
-	for(int i = 0 ; i < pointSets.size() ; ++i)
+	for(int pid = 0 ; pid < pointSets.size() ; ++pid)
 	{
-		d_particles[i] = CudaHelper::GetPointer(pointSets[i].getPointSetImplementation()->getParticles());
+		d_particles[pid] = CudaHelper::GetPointer(pointSets[pid].getPointSetImplementation()->getParticles());
 	}
 
 	d_volumes.resize(nModels);
 	d_densities0.resize(nModels);
-	for(unsigned int pid = 0; pid < nModels; pid++)
+	for(unsigned int fluidModelIndex = 0; fluidModelIndex < nModels; fluidModelIndex++)
 	{
-		FluidModel *fm = sim->getFluidModel(pid);
-		d_volumes[pid] = fm->getVolume(0); // TODO: ask Prof. Bender regarding scalability
-		d_densities0[pid] = fm->getDensity0();
+		FluidModel *fm = sim->getFluidModel(fluidModelIndex);
+		sumOfAllFluidParticles += fm->numberOfParticles();
+		d_volumes[fluidModelIndex] = fm->getVolume(0);
+		d_densities0[fluidModelIndex] = fm->getDensity0();
 	}
 
 	d_fmIndices.resize(nModels);
 
-	d_rigidBodyPositions.resize(sim->numberOfPointSets() - nModels);
-	d_isDynamic.resize(sim->numberOfPointSets() - nModels);
-	d_forcesPerThreadIndices.resize(sim->numberOfPointSets() - nModels);
-	d_torquesPerThreadIndices.resize(sim->numberOfPointSets() - nModels);
+	d_rigidBodyPositions.resize(nPointSets - nModels);
+	d_isDynamic.resize(nPointSets - nModels);
+	d_forcesPerThreadIndices.resize(nPointSets - nModels); // TODO: Marcel
+	d_torquesPerThreadIndices.resize(nPointSets - nModels); // TODO: Marcel
+
+	d_boundaryVolumeIndices.resize(nPointSets - nModels);
+
+	// allocate everything to its maximum potential size 
+	CudaHelper::CudaMalloc(&d_neighborPointsetIndices, nPointSets);
+	CudaHelper::CudaMalloc(&d_neighbors, nPointSets * nPointSets);
+	CudaHelper::CudaMalloc(&d_neighborCounts, nPointSets * nPointSets);
+	CudaHelper::CudaMalloc(&d_neighborOffsets, nPointSets * nPointSets);
+
+	CudaHelper::CudaMalloc(&d_fmDensities, sumOfAllFluidParticles);	
+	CudaHelper::CudaMalloc(&d_densitiesAdv, sumOfAllFluidParticles);
+	CudaHelper::CudaMalloc(&d_factors, sumOfAllFluidParticles);
+
+	CudaHelper::CudaMalloc(&d_density_error, 1);
+
+#ifdef USE_WARMSTART	
+	CudaHelper::CudaMalloc(&d_kappa, sumOfAllFluidParticles);
+#endif
+
+#ifdef USE_WARMSTART_V	
+	CudaHelper::CudaMalloc(&d_kappaV, sumOfAllFluidParticles);
+#endif
+
+	d_masses.resize(sumOfAllFluidParticles);
+	d_fmVelocities.resize(sumOfAllFluidParticles);
+
+	// TODO: Marcel
+	int sumForcesPerThread = 0;
+	int sumTorquesPerThread = 0;
+	int sumBoundaryParticles = 0;
+	for (unsigned int boundaryModelIndex = nModels; boundaryModelIndex < nPointSets; boundaryModelIndex++)
+	{
+		BoundaryModel_Akinci2012 *bm_neighbor = static_cast<BoundaryModel_Akinci2012*>(sim->getBoundaryModelFromPointSet(boundaryModelIndex));	
+
+		sumForcesPerThread += bm_neighbor->getForcesPerThread().size();
+		sumTorquesPerThread += bm_neighbor->getTorquesPerThread().size();
+		sumBoundaryParticles += bm_neighbor->getVelocities().size();
+	}
+
+	d_forcesPerThread.resize(sumForcesPerThread);
+	d_torquesPerThread.resize(sumTorquesPerThread);
+	d_bmVelocities.resize(sumBoundaryParticles);
+	d_boundaryVolumes.resize(sumBoundaryParticles);
 }
 
 void TimeStepDFSPHGPU::step()
@@ -161,14 +217,12 @@ void TimeStepDFSPHGPU::step()
 		PointSetImplementation *impl = pointSets[fluidModelIndex].getPointSetImplementation();
 		const Real W_zero = sim->W_zero();
 
-		//computeDensities(fluidModelIndex);
 		computeDensitiesGPU<<<impl->getNumberOfBlocks(), impl->getThreadsPerBlock(), impl->getThreadsPerBlock() * sizeof(Real)>>>( d_fmDensities, CudaHelper::GetPointer(d_volumes), CudaHelper::GetPointer(d_boundaryVolumes), 
 			CudaHelper::GetPointer(d_boundaryVolumeIndices), CudaHelper::GetPointer(d_fmIndices), CudaHelper::GetPointer(d_densities0), W_zero, d_kernelData, 
 			CudaHelper::GetPointer(d_particles), d_neighbors, d_neighborCounts, d_neighborOffsets, d_neighborPointsetIndices, nModels, 
 			nPointSets, fluidModelIndex, numParticles);
 
 		CudaHelper::CheckLastError();	
-		CudaHelper::DeviceSynchronize();
 
 		CudaHelper::MemcpyDeviceToHost(d_fmDensities + sumActiveParticles, &(model->getDensity(0)), sumParticles);
 		sumActiveParticles += numParticles;
@@ -176,8 +230,6 @@ void TimeStepDFSPHGPU::step()
 	STOP_TIMING_AVG;
 
 	START_TIMING("computeDFSPHFactor");
-	CudaHelper::CudaMalloc(&d_factors, sumParticles);
-
 	for (unsigned int fluidModelIndex = 0; fluidModelIndex < nModels; fluidModelIndex++)
 	{
 		FluidModel *model = sim->getFluidModel(fluidModelIndex);
@@ -191,17 +243,20 @@ void TimeStepDFSPHGPU::step()
 			nPointSets, fluidModelIndex, numParticles);
 
 		CudaHelper::CheckLastError();
-		CudaHelper::DeviceSynchronize();
 	}
 
 	STOP_TIMING_AVG;
 
 	if (m_enableDivergenceSolver)
 	{
+		sumActiveParticles = 0;
 		for(unsigned int pid = 0; pid < nModels; pid++)
 		{
 			FluidModel *fm_neighbor = sim->getFluidModel(pid);
-			d_fmVelocities.insert(d_fmVelocities.end(), fm_neighbor->getVelocities().begin(), fm_neighbor->getVelocities().begin() + fm_neighbor->numActiveParticles());
+			const unsigned int numActiveParticles = fm_neighbor->numActiveParticles();
+
+			d_fmVelocities.insert(d_fmVelocities.begin() + sumActiveParticles, fm_neighbor->getVelocities().begin(), fm_neighbor->getVelocities().begin() + numActiveParticles);
+			sumActiveParticles += numActiveParticles;
 		}
 
 		START_TIMING("divergenceSolve");
@@ -248,11 +303,13 @@ void TimeStepDFSPHGPU::step()
 	}
 
 	// put velocities on GPU again
-	d_fmVelocities.clear(); d_fmVelocities.shrink_to_fit();
+	sumActiveParticles = 0;
 	for(unsigned int pid = 0; pid < nModels; pid++)
 	{
 		FluidModel *fm_neighbor = sim->getFluidModel(pid);
-		d_fmVelocities.insert(d_fmVelocities.end(), fm_neighbor->getVelocities().begin(), fm_neighbor->getVelocities().begin() + fm_neighbor->numActiveParticles());
+		const unsigned int numActiveParticles = fm_neighbor->numActiveParticles();
+		d_fmVelocities.insert(d_fmVelocities.begin() + sumActiveParticles, fm_neighbor->getVelocities().begin(), fm_neighbor->getVelocities().begin() + numActiveParticles);
+		sumActiveParticles += numActiveParticles;
 	}
 
 	START_TIMING("pressureSolve");
@@ -342,8 +399,6 @@ void TimeStepDFSPHGPU::pressureSolve()
 	unsigned int sumActiveParticles = 0;
 
 #ifdef USE_WARMSTART	
-	CudaHelper::CudaMalloc(&d_kappa, sumParticles);
-
 	sumActiveParticles = 0;
 	for (unsigned int fluidModelIndex = 0; fluidModelIndex < nFluids; fluidModelIndex++)
 	{
@@ -438,7 +493,6 @@ void TimeStepDFSPHGPU::pressureSolve()
 		CudaHelper::MemcpyDeviceToHost(d_kappa + sumActiveParticles, &(m_simulationData.getKappa(fluidModelIndex, 0)), sim->getFluidModel(fluidModelIndex)->numActiveParticles());
 		sumActiveParticles += sim->getFluidModel(fluidModelIndex)->numActiveParticles();
 	}
-	CudaHelper::CudaFree(d_kappa);
 #endif
 }
 
@@ -459,8 +513,7 @@ void TimeStepDFSPHGPU::pressureSolveIteration(const unsigned int fluidModelIndex
 	const Real invH = static_cast<Real>(1.0) / h;
 	//Real density_error = 0.0;
 
-		Real density_error = 0.0, *d_density_error;
-		CudaHelper::CudaMalloc(&d_density_error, 1);
+		Real density_error = 0.0;
 		CudaHelper::MemcpyHostToDevice( &density_error, d_density_error, 1);
 
 #ifdef USE_WARMSTART
@@ -489,17 +542,13 @@ void TimeStepDFSPHGPU::pressureSolveIteration(const unsigned int fluidModelIndex
 		d_neighborOffsets, d_neighborPointsetIndices, nFluids, nPointSets, fluidModelIndex, numParticles);
 
 	CudaHelper::CheckLastError();
-	CudaHelper::DeviceSynchronize();
 
 	updateDensityErrorPressureSolve<<<impl->getNumberOfBlocks(), impl->getThreadsPerBlock()>>>( d_density_error, d_densitiesAdv, CudaHelper::GetPointer(d_densities0), 
 		CudaHelper::GetPointer(d_fmIndices), fluidModelIndex, numParticles);
 
 	CudaHelper::CheckLastError();
-	CudaHelper::DeviceSynchronize();
 
 	CudaHelper::MemcpyDeviceToHost(d_density_error, &density_error, 1);
-	CudaHelper::CudaFree(d_density_error);
-
 	avg_density_err = density_error / numParticles;
 }
 
@@ -560,8 +609,6 @@ void TimeStepDFSPHGPU::divergenceSolve()
 	unsigned int sumActiveParticles = 0; // helper for data transfers
 
 #ifdef USE_WARMSTART_V	
-	CudaHelper::CudaMalloc( &d_kappaV, sumParticles);
-
 	sumActiveParticles = 0;
 	for (unsigned int fluidModelIndex = 0; fluidModelIndex < nFluids; fluidModelIndex++)
 	{
@@ -659,7 +706,6 @@ void TimeStepDFSPHGPU::divergenceSolve()
 		CudaHelper::MemcpyDeviceToHost(d_kappaV + sumActiveParticles, &(m_simulationData.getKappaV(fluidModelIndex, 0)), sim->getFluidModel(fluidModelIndex)->numActiveParticles());
 		sumActiveParticles += sim->getFluidModel(fluidModelIndex)->numActiveParticles();
 	}
-	CudaHelper::CudaFree(d_kappaV);
 #endif
 }
 
@@ -707,7 +753,6 @@ void TimeStepDFSPHGPU::divergenceSolveIteration(const unsigned int fluidModelInd
 #endif
 
 	CudaHelper::CheckLastError();
-	CudaHelper::DeviceSynchronize();
 
 	computeDensityChanges<<<impl->getNumberOfBlocks(), impl->getThreadsPerBlock()>>>(d_densitiesAdv, CudaHelper::GetPointer(d_fmVelocities), CudaHelper::GetPointer(d_bmVelocities),
 		CudaHelper::GetPointer(d_fmIndices), CudaHelper::GetPointer(d_volumes), CudaHelper::GetPointer(d_boundaryVolumes), CudaHelper::GetPointer(d_boundaryVolumeIndices), 
@@ -715,7 +760,6 @@ void TimeStepDFSPHGPU::divergenceSolveIteration(const unsigned int fluidModelInd
 		nPointSets, fluidModelIndex, numParticles);
 
 	CudaHelper::CheckLastError();
-	CudaHelper::DeviceSynchronize();
 
 	unsigned int sumActiveParticles = 0;
 	for(unsigned int fluidModelIndex = 0; fluidModelIndex < nFluids; fluidModelIndex++)
@@ -758,23 +802,12 @@ void TimeStepDFSPHGPU::prepareData()
 	Simulation *sim = Simulation::getCurrent();
 	const unsigned int nPointSets = sim->numberOfPointSets();
 	const unsigned int nFluids = sim->numberOfFluidModels();
-	unsigned int sumActiveParticles = 0;
 
 	//////////////////////////////////////////////////////////////////////////////
 	// Common data
 	//////////////////////////////////////////////////////////////////////////////
 
-	if(isInitialized)
-	{
-		CudaHelper::CudaFree(d_neighbors);
-		CudaHelper::CudaFree(d_neighborCounts);
-		CudaHelper::CudaFree(d_neighborOffsets);
-		CudaHelper::CudaFree(d_neighborPointsetIndices); 
-	}
-
 	std::vector<cuNSearch::PointSet> &pointSets = sim->getCurrent()->getPointSets();
-
-	CudaHelper::CudaMalloc(&d_neighborPointsetIndices, nPointSets);
 	std::vector<unsigned int> neighborPointsetIndices_tmp(nPointSets);
 
 	unsigned int neighborsetCount = 0;
@@ -787,10 +820,6 @@ void TimeStepDFSPHGPU::prepareData()
 	CudaHelper::MemcpyHostToDevice(neighborPointsetIndices_tmp.data(), d_neighborPointsetIndices, nPointSets);
 
 	// flattened out the structures for efficiency
-	CudaHelper::CudaMalloc(&d_neighbors, neighborsetCount);
-	CudaHelper::CudaMalloc(&d_neighborCounts, neighborsetCount);
-	CudaHelper::CudaMalloc(&d_neighborOffsets, neighborsetCount);
-
 	for(int i = 0 ; i < nPointSets ; ++i)
 	{
 		const unsigned int nNeighborsets = pointSets[i].n_neighborsets();
@@ -812,60 +841,51 @@ void TimeStepDFSPHGPU::prepareData()
 	}
 
 	// for computeDensities and computePressureAccels
-	d_boundaryVolumeIndices.resize(nPointSets - nFluids);
 	unsigned int sumBoundaryVolumes = 0;
 	for(unsigned int pid = nFluids; pid < nPointSets; pid++)
 	{
 		BoundaryModel_Akinci2012 *bm_neighbor = static_cast<BoundaryModel_Akinci2012*>(sim->getBoundaryModelFromPointSet(pid));
-		d_boundaryVolumes.insert(d_boundaryVolumes.end(), bm_neighbor->getVolumes().begin(), bm_neighbor->getVolumes().end());
+		d_boundaryVolumes.insert(d_boundaryVolumes.begin() + sumBoundaryVolumes, bm_neighbor->getVolumes().begin(), bm_neighbor->getVolumes().end());
 
 		d_boundaryVolumeIndices[pid - nFluids] = sumBoundaryVolumes;
 		sumBoundaryVolumes += bm_neighbor->getVolumes().size();	
 	}
 
-	sumParticles = 0;	// for indexing
+	sumParticles = 0;
 	for(unsigned int fluidModelIndex = 0; fluidModelIndex < nFluids; fluidModelIndex++)
 	{
 		FluidModel *model = sim->getFluidModel(fluidModelIndex);
+		const unsigned int numActiveParticles = model->numActiveParticles();
 
-		//d_fmDensities.insert(d_fmDensities.end(), &(model->getDensity(0)), &(model->getDensity(0)) + model->numActiveParticles());
+		d_masses.insert(d_masses.begin() + sumParticles, model->getMasses().begin(), model->getMasses().begin() + numActiveParticles);
 		d_fmIndices[fluidModelIndex] = sumParticles;
-		sumParticles += model->numActiveParticles();
-
+		sumParticles += numActiveParticles;
 	}
-
-	CudaHelper::CudaMalloc(&d_fmDensities, sumParticles);
 
 	////////////////////////////////////////////////////////////////////////////
 	// DFPSH specific
 	////////////////////////////////////////////////////////////////////////////
 	
-	CudaHelper::CudaMalloc(&d_densitiesAdv, sumParticles);
-	
-	for(unsigned int fluidModelIndex = 0; fluidModelIndex < nFluids; fluidModelIndex++)
-	{
-		FluidModel *model = sim->getFluidModel(fluidModelIndex);
-		d_masses.insert(d_masses.end(), model->getMasses().begin(), model->getMasses().begin() + model->numActiveParticles());
-	}
-	
-	// for correct indexing
+	// TODO: Marcel
 	int sumForcesPerThread = 0;
 	int sumTorquesPerThread = 0;
+	int sumBoundaryParticles = 0;
 	for (unsigned int boundaryModelIndex = nFluids; boundaryModelIndex < nPointSets; boundaryModelIndex++)
 	{
 		BoundaryModel_Akinci2012 *bm_neighbor = static_cast<BoundaryModel_Akinci2012*>(sim->getBoundaryModelFromPointSet(boundaryModelIndex));	
-		d_forcesPerThread.insert(d_forcesPerThread.end(), bm_neighbor->getForcesPerThread().begin(), bm_neighbor->getForcesPerThread().end());
-		d_torquesPerThread.insert(d_torquesPerThread.end(), bm_neighbor->getTorquesPerThread().begin(), bm_neighbor->getTorquesPerThread().end());
+		d_forcesPerThread.insert(d_forcesPerThread.begin() + sumForcesPerThread, bm_neighbor->getForcesPerThread().begin(), bm_neighbor->getForcesPerThread().end());
+		d_torquesPerThread.insert(d_torquesPerThread.begin() + sumTorquesPerThread, bm_neighbor->getTorquesPerThread().begin(), bm_neighbor->getTorquesPerThread().end());
 		
 		d_forcesPerThreadIndices[boundaryModelIndex - nFluids] = sumForcesPerThread;
 		d_torquesPerThreadIndices[boundaryModelIndex - nFluids] = sumTorquesPerThread;
 		
-		sumForcesPerThread += bm_neighbor->getForcesPerThread().size();
-		sumTorquesPerThread += bm_neighbor->getTorquesPerThread().size();
-		
 		d_rigidBodyPositions[boundaryModelIndex - nFluids] = bm_neighbor->getRigidBodyPosition();
 		d_isDynamic[boundaryModelIndex - nFluids] = bm_neighbor->isDynamic();
-		d_bmVelocities.insert(d_bmVelocities.end(), bm_neighbor->getVelocities().begin(), bm_neighbor->getVelocities().end());
+		d_bmVelocities.insert(d_bmVelocities.begin() + sumBoundaryParticles, bm_neighbor->getVelocities().begin(), bm_neighbor->getVelocities().end());
+
+		sumForcesPerThread += bm_neighbor->getForcesPerThread().size();
+		sumTorquesPerThread += bm_neighbor->getTorquesPerThread().size();
+		sumBoundaryParticles += bm_neighbor->getVelocities().size();
 	}
 }
 	
@@ -885,9 +905,7 @@ void TimeStepDFSPHGPU::getDataBack()
 		sumActiveParticles += sim->getFluidModel(fluidModelIndex)->numActiveParticles();
 	}
 	
-	CudaHelper::CudaFree(d_factors);
-	CudaHelper::CudaFree(d_densitiesAdv);
-	
+	// TODO: Marcel
 	unsigned int sumForcesPerThread = 0;
 	unsigned int sumTorquesPerThread = 0;
 	sumActiveParticles = 0;
@@ -901,17 +919,6 @@ void TimeStepDFSPHGPU::getDataBack()
 		sumForcesPerThread += bm_neighbor->getForcesPerThread().size();
 		sumTorquesPerThread += bm_neighbor->getTorquesPerThread().size();
 	}
-	
-	d_forcesPerThread.clear(); d_forcesPerThread.shrink_to_fit();
-	d_torquesPerThread.clear(); d_torquesPerThread.shrink_to_fit();
-
-	d_fmVelocities.clear(); d_fmVelocities.shrink_to_fit();
-	d_bmVelocities.clear(); d_bmVelocities.shrink_to_fit();
-	d_boundaryVolumes.clear(); d_boundaryVolumes.shrink_to_fit();
-	d_boundaryVolumeIndices.clear(); d_boundaryVolumeIndices.shrink_to_fit();
-
-	CudaHelper::CudaFree(d_fmDensities);
-	d_masses.clear(); d_masses.shrink_to_fit();
 }
 
 void TimeStepDFSPHGPU::reset()
