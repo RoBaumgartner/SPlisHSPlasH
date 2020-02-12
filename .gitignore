@@ -1,0 +1,9 @@
+/lib
+/bin
+/data/Scenes/Cache
+/extern/PositionBasedDynamics
+/extern/cuNSearch
+/extern/Discregrid
+/extern/GenericParameters
+/extern/install
+/Utilities/Version.h
