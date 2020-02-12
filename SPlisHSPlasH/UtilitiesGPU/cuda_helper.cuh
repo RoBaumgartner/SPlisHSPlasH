@@ -1,6 +1,7 @@
 #pragma once
 #include <thrust/device_vector.h>
 
+
 class CUDAException : public std::runtime_error
 {
 public:

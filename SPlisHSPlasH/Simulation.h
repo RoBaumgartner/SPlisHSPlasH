@@ -61,7 +61,7 @@ for(cuNSearch::uint pid = 0; pid < nFluids; pid++) \
 	for(cuNSearch::uint j = 0; j < neighborCounts[neighborsetIndex][i]; j++) \
 	{ \
 		const cuNSearch::uint neighborIndex = neighbors[neighborsetIndex][neighborOffsets[neighborsetIndex][i] + j]; \
-		const double3 &xj = particles[pid][neighborIndex]; \
+		const Real3 &xj = particles[pid][neighborIndex]; \
 		code \
 	} \
 }
@@ -77,7 +77,7 @@ for (cuNSearch::uint pid = nFluids; pid < nPointSets; pid++) \
 	for(unsigned int j = 0; j < neighborCounts[neighborsetIndex][i]; j++) \
 	{ \
 		const cuNSearch::uint neighborIndex = neighbors[neighborsetIndex][neighborOffsets[neighborsetIndex][i] + j]; \
-		const double3 &xj = particles[pid][neighborIndex]; \
+		const Real3 &xj = particles[pid][neighborIndex]; \
 		code \
 	} \
 }
