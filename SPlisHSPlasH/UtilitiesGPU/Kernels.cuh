@@ -5,6 +5,9 @@
 #include "SPlisHSPlasH/NeighborhoodSearch.h"
 #include "SPlisHSPlasH/Common.h"
 #include "SPlisHSPlasH/SPHKernels.h"
+#include "Types.cuh"
+
+using namespace cuNSearch;
 
 const unsigned int PRECOMPUTED_KERNEL_SIZE = 10000;
 
