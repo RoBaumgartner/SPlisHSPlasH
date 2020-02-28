@@ -3,6 +3,18 @@
 
 using namespace SPH;
 
+#define TEX_VERSION_A
+
+#ifdef PRECOMPUTED_KERNEL_AS_TEXTURE
+#ifdef TEX_VERSION_A
+#else
+texture<Real, cudaTextureType1D, cudaReadModeElementType> precomputedKernelTexW;
+texture<Real, cudaTextureType1D, cudaReadModeElementType> precomputedKernelTexGradW;
+#endif
+cudaArray * d_precomputedKernelArrayW = nullptr;
+cudaArray * d_precomputedKernelArrayGradW = nullptr;
+#endif
+
 //////////////////////////////////////////////////////////////////
 // Helper host methods 
 //////////////////////////////////////////////////////////////////
@@ -24,14 +36,123 @@ void updateKernelData(KernelData &data)
 	data.radius = PrecomputedKernel<CubicKernel, PRECOMPUTED_KERNEL_SIZE>::getRadius();
 	data.invStepSize = PrecomputedKernel<CubicKernel, PRECOMPUTED_KERNEL_SIZE>::getInvStepSize();
 	data.radius2 = data.radius * data.radius;
-
 	CudaHelper::MemcpyHostToDevice(PrecomputedKernel<CubicKernel, PRECOMPUTED_KERNEL_SIZE>::getWeightField(), data.d_W, PRECOMPUTED_KERNEL_SIZE);
 	CudaHelper::MemcpyHostToDevice(PrecomputedKernel<CubicKernel, PRECOMPUTED_KERNEL_SIZE>::getGradField(), data.d_gradW, PRECOMPUTED_KERNEL_SIZE + 1);
+
+#ifdef PRECOMPUTED_KERNEL_AS_TEXTURE
+	// kernel value texture
+	{
+#ifdef TEX_VERSION_A
+		// create the array that stores the texture data
+		cudaChannelFormatDesc channelDescW = cudaCreateChannelDesc(8 * sizeof(Real), 0, 0, 0, cudaChannelFormatKindFloat);
+		cudaMallocArray(&d_precomputedKernelArrayW, &channelDescW, PRECOMPUTED_KERNEL_SIZE, 1);
+		//CudaHelper::MemcpyHostToDevice(PrecomputedKernel<CubicKernel, PRECOMPUTED_KERNEL_SIZE>::getWeightField(), d_precomputedKernelArrayW, PRECOMPUTED_KERNEL_SIZE);
+		cudaMemcpyToArray(d_precomputedKernelArrayW, 0, 0, PrecomputedKernel<CubicKernel, PRECOMPUTED_KERNEL_SIZE>::getWeightField(), sizeof(Real)*PRECOMPUTED_KERNEL_SIZE, cudaMemcpyHostToDevice);
+		// create the texture resource that uses the array created above
+		cudaResourceDesc texWRes;
+		memset(&texWRes, 0, sizeof(cudaResourceDesc));
+		texWRes.resType = cudaResourceTypeArray;
+		texWRes.res.array.array = d_precomputedKernelArrayW;
+		// the texture description sets the filter mode etc.
+		cudaTextureDesc texWDescr;
+		memset(&texWDescr, 0, sizeof(cudaTextureDesc));
+		texWDescr.normalizedCoords = true;
+		texWDescr.filterMode = cudaFilterModeLinear;
+		texWDescr.addressMode[0] = cudaAddressModeClamp;
+		texWDescr.readMode = cudaReadModeElementType;
+		// create a texture object with thte resource and description from above
+		cudaCreateTextureObject(&data.texW, &texWRes, &texWDescr, nullptr);
+
+#else
+
+		cudaMallocArray(&d_precomputedKernelArrayW, &precomputedKernelTexW.channelDesc, PRECOMPUTED_KERNEL_SIZE, 1);
+		//CudaHelper::MemcpyHostToDevice(PrecomputedKernel<CubicKernel, PRECOMPUTED_KERNEL_SIZE>::getWeightField(), d_precomputedKernelArrayW, PRECOMPUTED_KERNEL_SIZE);
+		cudaError_t cudaStatus = cudaMemcpyToArray(d_precomputedKernelArrayW, 0, 0, PrecomputedKernel<CubicKernel, PRECOMPUTED_KERNEL_SIZE>::getWeightField(), sizeof(Real)*PRECOMPUTED_KERNEL_SIZE, cudaMemcpyHostToDevice);
+		if (cudaStatus != cudaSuccess)
+		{
+			throw CUDAMemCopyException("cudaMemcpy() from host to device failed!");
+		}
+		cudaBindTextureToArray(&precomputedKernelTexW, d_precomputedKernelArrayW, &precomputedKernelTexW.channelDesc);
+		precomputedKernelTexW.normalized = false;
+		precomputedKernelTexW.filterMode = cudaFilterModeLinear;
+		precomputedKernelTexW.addressMode[0] = cudaAddressModeClamp;
+#endif
+	}
+
+	// kernel gradient texture
+	{
+#ifdef TEX_VERSION_A
+		// create the array that stores the texture data
+		cudaChannelFormatDesc channelDescGradW = cudaCreateChannelDesc(8 * sizeof(Real), 0, 0, 0, cudaChannelFormatKindFloat);
+		cudaMallocArray(&d_precomputedKernelArrayGradW, &channelDescGradW, PRECOMPUTED_KERNEL_SIZE + 1, 1);
+		//CudaHelper::MemcpyHostToDevice(PrecomputedKernel<CubicKernel, PRECOMPUTED_KERNEL_SIZE>::getGradField(), d_precomputedKernelArrayGradW, PRECOMPUTED_KERNEL_SIZE + 1);
+		cudaMemcpyToArray(d_precomputedKernelArrayGradW, 0, 0, PrecomputedKernel<CubicKernel, PRECOMPUTED_KERNEL_SIZE>::getGradField(), sizeof(Real)*(PRECOMPUTED_KERNEL_SIZE+1), cudaMemcpyHostToDevice);
+		// create the texture resource that uses the array created above
+		cudaResourceDesc texGradWRes;
+		memset(&texGradWRes, 0, sizeof(cudaResourceDesc));
+		texGradWRes.resType = cudaResourceTypeArray;
+		texGradWRes.res.array.array = d_precomputedKernelArrayGradW;
+		// the texture description sets the filter mode etc.
+		cudaTextureDesc texGradWDescr;
+		memset(&texGradWDescr, 0, sizeof(cudaTextureDesc));
+		texGradWDescr.normalizedCoords = true;
+		texGradWDescr.filterMode = cudaFilterModeLinear;
+		texGradWDescr.addressMode[0] = cudaAddressModeClamp;
+		texGradWDescr.readMode = cudaReadModeElementType;
+		// create a texture object with thte resource and description from above
+		cudaCreateTextureObject(&data.texGradW, &texGradWRes, &texGradWDescr, nullptr);
+#else
+
+		cudaMallocArray(&d_precomputedKernelArrayGradW, &precomputedKernelTexGradW.channelDesc, PRECOMPUTED_KERNEL_SIZE + 1, 1);
+		//CudaHelper::MemcpyHostToDevice(PrecomputedKernel<CubicKernel, PRECOMPUTED_KERNEL_SIZE>::getWeightField(), d_precomputedKernelArrayGradW, PRECOMPUTED_KERNEL_SIZE);
+		cudaError_t cudaStatus = cudaMemcpyToArray(d_precomputedKernelArrayGradW, 0, 0, PrecomputedKernel<CubicKernel, PRECOMPUTED_KERNEL_SIZE>::getGradField(), sizeof(Real)*(PRECOMPUTED_KERNEL_SIZE + 1), cudaMemcpyHostToDevice);
+		if (cudaStatus != cudaSuccess)
+		{
+			throw CUDAMemCopyException("cudaMemcpy() from host to device failed!");
+		}
+		cudaBindTextureToArray(&precomputedKernelTexGradW, d_precomputedKernelArrayGradW, &precomputedKernelTexGradW.channelDesc);
+		precomputedKernelTexGradW.normalized = false;
+		precomputedKernelTexGradW.filterMode = cudaFilterModeLinear;
+		precomputedKernelTexGradW.addressMode[0] = cudaAddressModeClamp;
+#endif
+	}
+
+#endif
 }
 
 //////////////////////////////////////////////////////////////////
 //Kernels for all methods 
 //////////////////////////////////////////////////////////////////
+
+#ifdef PRECOMPUTED_KERNEL_AS_TEXTURE
+
+__device__
+Real kernelWeightPrecomputed(const Vector3r &r, const Real radius, cudaTextureObject_t tex)
+{
+	const float u = r.norm() / radius;
+	return static_cast<Real>(tex1D<float>(tex, u)); // TODO: https://devtalk.nvidia.com/default/topic/465851/cuda-programming-and-performance/cuda-texture/post/3310670/#3310670
+}
+
+__device__
+Vector3r gradKernelWeightPrecomputed(const Vector3r &r, const Real radius, cudaTextureObject_t tex)
+{
+	const float u = r.norm() / radius;
+	return static_cast<Real>(tex1D<float>(tex, u)) * r; // TODO: https://devtalk.nvidia.com/default/topic/465851/cuda-programming-and-performance/cuda-texture/post/3310670/#3310670
+}
+
+__device__
+Real kernelWeightPrecomputed(const Vector3r &r, const KernelData* const data)
+{
+	return kernelWeightPrecomputed(r, data->radius, data->texW);
+}
+
+__device__
+Vector3r gradKernelWeightPrecomputed(const Vector3r &r, const KernelData* const data)
+{
+	return gradKernelWeightPrecomputed(r, data->radius, data->texGradW);
+}
+
+#else
 
 __device__
 Real kernelWeightPrecomputed(const Vector3r &r, const KernelData* const data)
@@ -73,6 +194,8 @@ Vector3r gradKernelWeightPrecomputed(const Vector3r &r, const KernelData* const 
 
 	return res;
 }
+
+#endif
 
 __device__
 Real kernelWeight(const Vector3r& rin, const Real m_radius)
@@ -161,7 +284,7 @@ void computeDensitiesGPU(/*out*/ Real* const densities, const Real* const volume
 		return;
 
 	extern __shared__ Real densities_tmp[];
-
+	printf("Here is 1");
 	Real &density = densities_tmp[threadIdx.x];
 
 	density = volumes[fluidModelIndex] * W_zero;
@@ -170,6 +293,8 @@ void computeDensitiesGPU(/*out*/ Real* const densities, const Real* const volume
 	//////////////////////////////////////////////////////////////////////////
 	// Fluid
 	//////////////////////////////////////////////////////////////////////////
+	printf("Here is 2");
+
 	forall_fluid_neighborsGPU(
 		density += volumes[pid] * kernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData);
 	)
@@ -177,6 +302,7 @@ void computeDensitiesGPU(/*out*/ Real* const densities, const Real* const volume
 	//////////////////////////////////////////////////////////////////////////
 	// Boundary
 	//////////////////////////////////////////////////////////////////////////
+	printf("Here is 3");
   forall_boundary_neighborsGPU(
 		density += boundaryVolumes[boundaryVolumeIndices[pid - nFluids] + neighborIndex] *  kernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData);
 	)

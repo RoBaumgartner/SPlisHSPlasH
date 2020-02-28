@@ -7,17 +7,22 @@
 #include "SPlisHSPlasH/SPHKernels.h"
 #include "Types.cuh"
 
+#define PRECOMPUTED_KERNEL_AS_TEXTURE
+
 using namespace cuNSearch;
 
 const unsigned int PRECOMPUTED_KERNEL_SIZE = 10000;
 
 //////////////////////////////////////////////////////////////////
-// Helper class 
+// Helper class
 //////////////////////////////////////////////////////////////////
 
 struct KernelData{
 	Real *d_W, *d_gradW;
 	Real radius, radius2, invStepSize;
+
+	cudaTextureObject_t texW;
+	cudaTextureObject_t texGradW;
 
 	KernelData();
 	~KernelData();
@@ -26,8 +31,18 @@ struct KernelData{
 void updateKernelData(KernelData &data);
 
 //////////////////////////////////////////////////////////////////
-//Kernels for all methods 
+//Kernels for all methods
 //////////////////////////////////////////////////////////////////
+
+#ifdef PRECOMPUTED_KERNEL_AS_TEXTURE
+
+//__device__
+//Real kernelWeightPrecomputed(const Vector3r &r, const Real radius);
+//
+//__device__
+//Vector3r gradKernelWeightPrecomputed(const Vector3r &r, const Real radius);
+
+#else
 
 __device__
 Real kernelWeightPrecomputed(const Vector3r &r, const KernelData* const data);
@@ -35,7 +50,9 @@ Real kernelWeightPrecomputed(const Vector3r &r, const KernelData* const data);
 __device__
 Vector3r gradKernelWeightPrecomputed(const Vector3r &r, const KernelData* const data);
 
-__device__ 
+#endif
+
+__device__
 Real kernelWeight(const Vector3r& rin, const Real m_radius);
 
 __device__
@@ -52,10 +69,10 @@ void computeDensitiesGPU(/*out*/ Real* const densities, const Real* const volume
 	uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles);
 
 //////////////////////////////////////////////////////////////////
-//Kernels for WCSPH method 
+//Kernels for WCSPH method
 //////////////////////////////////////////////////////////////////
 
-__global__ 
+__global__
 void clearAccelerationsGPU(Real* masses, Vector3r* accelerations, const Vector3r grav, const unsigned int numActiveParticles);
 
 __global__
@@ -69,13 +86,13 @@ void computePressureAccelsGPU( /* output */ Vector3r* const pressureAccels, /* o
 	/*start of forall-parameters*/ Real3** particles, uint** neighbors, uint** neighborCounts, uint** neighborOffsets, 
   uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles);
 
-__global__ 
+__global__
 void updatePosPressureAccelPressureAccel(Vector3r* const positions, Vector3r* const velocities, Vector3r* const accelerations,
 	const Vector3r* const pressureAccels, const Real h, const uint numParticles);
 
 
 //////////////////////////////////////////////////////////////////
-//Kernels for the DFSPH method 
+//Kernels for the DFSPH method
 //////////////////////////////////////////////////////////////////
 
 __global__ 
