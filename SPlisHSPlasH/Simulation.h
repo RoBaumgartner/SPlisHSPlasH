@@ -57,7 +57,6 @@ for (unsigned int pid = nFluids; pid < sim->numberOfPointSets(); pid++) \
 #define forall_fluid_neighborsGPU(code) \
 for(uint pid = 0; pid < nFluids; pid++) \
 { \
-	__syncthreads(); \
 	const uint neighborsetIndex = neighborPointsetIndices[fluidModelIndex] + pid; \
 	for(uint j = 0; j < neighborCounts[neighborsetIndex][i]; j++) \
 	{ \
@@ -74,7 +73,6 @@ for(uint pid = 0; pid < nFluids; pid++) \
 #define forall_boundary_neighborsGPU(code) \
 for (uint pid = nFluids; pid < nPointSets; pid++) \
 { \
-	__syncthreads(); \
 	const uint neighborsetIndex = neighborPointsetIndices[fluidModelIndex] + pid; \
 	for(unsigned int j = 0; j < neighborCounts[neighborsetIndex][i]; j++) \
 	{ \
