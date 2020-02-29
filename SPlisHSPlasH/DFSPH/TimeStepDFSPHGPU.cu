@@ -686,11 +686,11 @@ void TimeStepDFSPHGPU::divergenceSolveIteration(const unsigned int fluidModelInd
 	const unsigned int nBoundaries = sim->numberOfBoundaryModels();
 	const Real h = TimeManager::getCurrent()->getTimeStepSize();
 	const Real invH = static_cast<Real>(1.0) / h;
-	Real density_error = 0.0;
-/* 	Real density_error = 0.0, *d_density_error;
+	//Real density_error = 0.0;
+	Real density_error = 0.0, *d_density_error;
 
 	CudaHelper::CudaMalloc(&d_density_error, 1);
-	CudaHelper::MemcpyHostToDevice( &density_error, d_density_error, 1); */
+	CudaHelper::MemcpyHostToDevice( &density_error, d_density_error, 1);
 
 	//////////////////////////////////////////////////////////////////////////
 	// Perform Jacobi iteration over all blocks
@@ -716,15 +716,16 @@ void TimeStepDFSPHGPU::divergenceSolveIteration(const unsigned int fluidModelInd
 	CudaHelper::CheckLastError();
 	CudaHelper::DeviceSynchronize();
 
-	computeDensityChanges<<<impl->getNumberOfBlocks(), impl->getThreadsPerBlock()>>>(d_densitiesAdv, CudaHelper::GetPointer(d_fmVelocities), CudaHelper::GetPointer(d_bmVelocities),
-		CudaHelper::GetPointer(d_fmIndices), CudaHelper::GetPointer(d_volumes), CudaHelper::GetPointer(d_boundaryVolumes), CudaHelper::GetPointer(d_boundaryVolumeIndices), 
+	divergenceSolveKernel2<<<impl->getNumberOfBlocks(), impl->getThreadsPerBlock(), impl->getThreadsPerBlock() * sizeof(Real3)>>>(d_densitiesAdv, d_density_error, CudaHelper::GetPointer(d_fmVelocities), CudaHelper::GetPointer(d_bmVelocities),
+		CudaHelper::GetPointer(d_fmIndices), CudaHelper::GetPointer(d_volumes), CudaHelper::GetPointer(d_boundaryVolumes), CudaHelper::GetPointer(d_boundaryVolumeIndices), CudaHelper::GetPointer(d_densities0),
 		d_kernelData, CudaHelper::GetPointer(d_particles), d_neighbors, d_neighborCounts, d_neighborOffsets, d_neighborPointsetIndices, nFluids, 
 		nPointSets, fluidModelIndex, numParticles);
 
 	CudaHelper::DeviceSynchronize();
 	CudaHelper::CheckLastError();
 
-	unsigned int sumActiveParticles = 0;
+	// TODO: if there is an error, i.e. non-divergence free, then it most likely happened here
+/* 	unsigned int sumActiveParticles = 0;
 	for(unsigned int fluidModelIndex = 0; fluidModelIndex < nFluids; fluidModelIndex++)
 	{
 		CudaHelper::MemcpyDeviceToHost( d_densitiesAdv + sumActiveParticles, &(m_simulationData.getDensityAdv(fluidModelIndex, 0)), sim->getFluidModel(fluidModelIndex)->numActiveParticles());
@@ -745,20 +746,19 @@ void TimeStepDFSPHGPU::divergenceSolveIteration(const unsigned int fluidModelInd
 	{
 		CudaHelper::MemcpyHostToDevice( &(m_simulationData.getDensityAdv(fluidModelIndex, 0)), d_densitiesAdv + sumActiveParticles, sim->getFluidModel(fluidModelIndex)->numActiveParticles());
 		sumActiveParticles += sim->getFluidModel(fluidModelIndex)->numActiveParticles();
-	}
+	} */
 
 /* 	updateDensityErrorDivergence<<<impl->getNumberOfBlocks(), impl->getThreadsPerBlock()>>>( d_density_error, d_densitiesAdv, CudaHelper::GetPointer(d_densities0), 
 		CudaHelper::GetPointer(d_fmIndices), fluidModelIndex, numParticles);
 
 	CudaHelper::CheckLastError();
-	CudaHelper::DeviceSynchronize();
+	CudaHelper::DeviceSynchronize(); */
 
 	CudaHelper::MemcpyDeviceToHost(d_density_error, &density_error, 1);
-	CudaHelper::CudaFree(d_density_error); */
+	CudaHelper::CudaFree(d_density_error);
 	
 	avg_density_err = density_error/numParticles;
 }
-
 
 void TimeStepDFSPHGPU::prepareData()
 {
