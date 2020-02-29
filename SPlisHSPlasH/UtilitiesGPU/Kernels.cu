@@ -284,7 +284,6 @@ void computeDensitiesGPU(/*out*/ Real* const densities, const Real* const volume
 		return;
 
 	extern __shared__ Real densities_tmp[];
-	printf("Here is 1");
 	Real &density = densities_tmp[threadIdx.x];
 
 	density = volumes[fluidModelIndex] * W_zero;
@@ -293,8 +292,6 @@ void computeDensitiesGPU(/*out*/ Real* const densities, const Real* const volume
 	//////////////////////////////////////////////////////////////////////////
 	// Fluid
 	//////////////////////////////////////////////////////////////////////////
-	printf("Here is 2");
-
 	forall_fluid_neighborsGPU(
 		density += volumes[pid] * kernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData);
 	)
@@ -302,7 +299,6 @@ void computeDensitiesGPU(/*out*/ Real* const densities, const Real* const volume
 	//////////////////////////////////////////////////////////////////////////
 	// Boundary
 	//////////////////////////////////////////////////////////////////////////
-	printf("Here is 3");
   forall_boundary_neighborsGPU(
 		density += boundaryVolumes[boundaryVolumeIndices[pid - nFluids] + neighborIndex] *  kernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData);
 	)
@@ -423,6 +419,9 @@ void computeDFSPHFactors(/* out */ Real* factors, const Real* const boundaryVolu
 	int i = blockIdx.x*blockDim.x + threadIdx.x;
 	if(i >= numParticles)
 		return;
+
+	extern __shared__ Real3 pos[];
+	pos[threadIdx.x] = particles[fluidModelIndex][i];
 	
 	Real &factor = factors[fmIndices[fluidModelIndex] + i];
 	factor = 0.0;
@@ -431,7 +430,7 @@ void computeDFSPHFactors(/* out */ Real* factors, const Real* const boundaryVolu
 	// Compute gradient dp_i/dx_j * (1/k)  and dp_j/dx_j * (1/k)
 	//////////////////////////////////////////////////////////////////////////
 
-	const Real3 xi = particles[fluidModelIndex][i];
+	//const Real3 xi = particles[fluidModelIndex][i];
 	Real sum_grad_p_k = 0.0;
 	Vector3r grad_p_i;
 	grad_p_i.setZero();
@@ -440,7 +439,7 @@ void computeDFSPHFactors(/* out */ Real* factors, const Real* const boundaryVolu
 	// Fluid
 	//////////////////////////////////////////////////////////////////////////
 forall_fluid_neighborsGPU(
-	const Vector3r grad_p_j = -fmVolumes[fluidModelIndex] * gradKernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData);
+	const Vector3r grad_p_j = -fmVolumes[fluidModelIndex] * gradKernelWeightPrecomputed(Vector3r(pos[threadIdx.x].x - xj.x, pos[threadIdx.x].y - xj.y, pos[threadIdx.x].z - xj.z), kernelData);
 	sum_grad_p_k += grad_p_j.squaredNorm();
 	grad_p_i -= grad_p_j;
 )
@@ -449,7 +448,7 @@ forall_fluid_neighborsGPU(
 	// Boundary
 	//////////////////////////////////////////////////////////////////////////
 	forall_boundary_neighborsGPU(
-		const Vector3r grad_p_j = -boundaryVolumes[boundaryVolumeIndices[pid - nFluids] + neighborIndex] * gradKernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData);
+		const Vector3r grad_p_j = -boundaryVolumes[boundaryVolumeIndices[pid - nFluids] + neighborIndex] * gradKernelWeightPrecomputed(Vector3r(pos[threadIdx.x].x - xj.x, pos[threadIdx.x].y - xj.y, pos[threadIdx.x].z - xj.z), kernelData);
 		grad_p_i -= grad_p_j;
 	)
 
@@ -475,8 +474,11 @@ void computeDensityChanges(/*out*/ Real* const densitiesAdv, const Vector3r* con
 	if(i >= numParticles)
 		return;
 
+	extern __shared__ Real3 pos[];
+	pos[threadIdx.x] = particles[fluidModelIndex][i];
+
 	Real &densityAdv = densitiesAdv[fmIndices[fluidModelIndex] + i];	
-	const Real3 &xi = particles[fluidModelIndex][i];
+	//const Real3 &xi = particles[fluidModelIndex][i];
 	const Vector3r &vi = fmVelocities[fmIndices[fluidModelIndex] + i];
 
 	densityAdv = 0.0;
@@ -487,7 +489,7 @@ void computeDensityChanges(/*out*/ Real* const densitiesAdv, const Vector3r* con
 	//////////////////////////////////////////////////////////////////////////
 	forall_fluid_neighborsGPU(
 		const Vector3r &vj = fmVelocities[fmIndices[pid] + neighborIndex];
-		densityAdv += fmVolumes[pid] * (vi - vj).dot(gradKernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData));
+		densityAdv += fmVolumes[pid] * (vi - vj).dot(gradKernelWeightPrecomputed(Vector3r(pos[threadIdx.x].x - xj.x, pos[threadIdx.x].y - xj.y, pos[threadIdx.x].z - xj.z), kernelData));
 	)
 
 	//////////////////////////////////////////////////////////////////////////
@@ -495,7 +497,7 @@ void computeDensityChanges(/*out*/ Real* const densitiesAdv, const Vector3r* con
 	//////////////////////////////////////////////////////////////////////////
 	forall_boundary_neighborsGPU(
 		const Vector3r &vj = bmVelocities[boundaryVolumeIndices[pid - nFluids] + neighborIndex];
-		densityAdv += boundaryVolumes[boundaryVolumeIndices[pid - nFluids] + neighborIndex] * (vi - vj).dot(gradKernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData));
+		densityAdv += boundaryVolumes[boundaryVolumeIndices[pid - nFluids] + neighborIndex] * (vi - vj).dot(gradKernelWeightPrecomputed(Vector3r(pos[threadIdx.x].x - xj.x, pos[threadIdx.x].y - xj.y, pos[threadIdx.x].z - xj.z), kernelData));
 	)
 	
 	// only correct positive divergence
@@ -522,9 +524,12 @@ void computeDensityAdvs(/*out*/ Real* const densitiesAdv, const Real* const fmDe
 	if(i >= numParticles)
 		return;
 
+	extern __shared__ Real3 pos[];
+	pos[threadIdx.x] = particles[fluidModelIndex][i];
+
 	Real &densityAdv = densitiesAdv[fmIndices[fluidModelIndex] + i];
 	const Real &density = fmDensities[fmIndices[fluidModelIndex] + i];
-	const Real3 &xi = particles[fluidModelIndex][i];
+	//const Real3 &xi = particles[fluidModelIndex][i];
 	const Vector3r &vi = fmVelocities[fmIndices[fluidModelIndex] + i];
 	Real delta = 0.0;
 
@@ -533,7 +538,7 @@ void computeDensityAdvs(/*out*/ Real* const densitiesAdv, const Real* const fmDe
 	//////////////////////////////////////////////////////////////////////////
 	forall_fluid_neighborsGPU(
 		const Vector3r &vj = fmVelocities[fmIndices[pid] + neighborIndex];
-		delta += fmVolumes[pid] * (vi - vj).dot(gradKernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData));
+		delta += fmVolumes[pid] * (vi - vj).dot(gradKernelWeightPrecomputed(Vector3r(pos[threadIdx.x].x - xj.x, pos[threadIdx.x].y - xj.y, pos[threadIdx.x].z - xj.z), kernelData));
 	)
 
 	//////////////////////////////////////////////////////////////////////////
@@ -541,7 +546,7 @@ void computeDensityAdvs(/*out*/ Real* const densitiesAdv, const Real* const fmDe
 	//////////////////////////////////////////////////////////////////////////
 	forall_boundary_neighborsGPU(
 		const Vector3r &vj = bmVelocities[boundaryVolumeIndices[pid - nFluids] + neighborIndex];
-		delta += boundaryVolumes[boundaryVolumeIndices[pid - nFluids] + neighborIndex] * (vi - vj).dot(gradKernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData));
+		delta += boundaryVolumes[boundaryVolumeIndices[pid - nFluids] + neighborIndex] * (vi - vj).dot(gradKernelWeightPrecomputed(Vector3r(pos[threadIdx.x].x - xj.x, pos[threadIdx.x].y - xj.y, pos[threadIdx.x].z - xj.z), kernelData));
 	)
 	
 	densityAdv = density / densities0[fluidModelIndex] + h*delta;
@@ -572,9 +577,12 @@ void divergenceSolveWarmstart( /*out*/ Vector3r* const fmVelocities, /* output *
 
 	const Real invH = static_cast<Real>(1.0) / h;
 
+	extern __shared__ Real3 pos[];
+	pos[threadIdx.x] = particles[fluidModelIndex][i];
+
 	Vector3r &vel = fmVelocities[fmIndices[fluidModelIndex] + i];
 	const Real ki = kappaV[fmIndices[fluidModelIndex] + i];
-	const Real3 &xi = particles[fluidModelIndex][i];
+	//const Real3 &xi = particles[fluidModelIndex][i];
 
 	//////////////////////////////////////////////////////////////////////////
 	// Fluid
@@ -585,7 +593,7 @@ void divergenceSolveWarmstart( /*out*/ Vector3r* const fmVelocities, /* output *
 		const Real kSum = (ki + densities0[pid] / densities0[fluidModelIndex] * kj);
 		if (fabsf(kSum) > eps)
 		{
-			const Vector3r grad_p_j = -fmVolumes[pid] * gradKernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData);
+			const Vector3r grad_p_j = -fmVolumes[pid] * gradKernelWeightPrecomputed(Vector3r(pos[threadIdx.x].x - xj.x, pos[threadIdx.x].y - xj.y, pos[threadIdx.x].z - xj.z), kernelData);
 			vel -= h * kSum * grad_p_j;					// ki, kj already contain inverse density
 		}
 	)
@@ -596,7 +604,7 @@ void divergenceSolveWarmstart( /*out*/ Vector3r* const fmVelocities, /* output *
 	if (fabsf(ki) > eps)
 	{
 		forall_boundary_neighborsGPU(
-			const Vector3r grad_p_j = -boundaryVolumes[boundaryVolumeIndices[pid - nFluids] + neighborIndex] * gradKernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData);
+			const Vector3r grad_p_j = -boundaryVolumes[boundaryVolumeIndices[pid - nFluids] + neighborIndex] * gradKernelWeightPrecomputed(Vector3r(pos[threadIdx.x].x - xj.x, pos[threadIdx.x].y - xj.y, pos[threadIdx.x].z - xj.z), kernelData);
 			const Vector3r velChange = -h * (Real) 1.0 * ki * grad_p_j;				// kj already contains inverse density
 			vel += velChange;
 			addForce(Vector3r(xj.x, xj.y, xj.z), -masses[fmIndices[fluidModelIndex] + i] * velChange * invH, forcesPerThread, torquesPerThread, rigidBodyPositions, forcesPerThreadIndices, torquesPerThreadIndices, pid - nFluids, tid);
@@ -637,12 +645,15 @@ void divergenceSolveUpdateFluidVelocities( /*out*/ Vector3r* const fmVelocities,
 	if(i >= numParticles)
 		return;
 
+	extern __shared__ Real3 pos[];
+	pos[threadIdx.x] = particles[fluidModelIndex][i];
+	
 	const Real b_i = densitiesAdv[fmIndices[fluidModelIndex] + i];
 	const Real ki = b_i * factors[fmIndices[fluidModelIndex] + i];
 	kappaV[fmIndices[fluidModelIndex] + i] += ki;
 
 	Vector3r &v_i = fmVelocities[fmIndices[fluidModelIndex] + i];
-	const Real3 &xi = particles[fluidModelIndex][i];
+	//const Real3 &xi = particles[fluidModelIndex][i];
 
 	//////////////////////////////////////////////////////////////////////////
 	// Fluid
@@ -654,7 +665,7 @@ void divergenceSolveUpdateFluidVelocities( /*out*/ Vector3r* const fmVelocities,
 		const Real kSum = ki + densities0[pid] / densities0[fluidModelIndex] * kj;
 		if(fabsf(kSum) > eps)
 		{
-			const Vector3r grad_p_j = -fmVolumes[pid] * gradKernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData);
+			const Vector3r grad_p_j = -fmVolumes[pid] * gradKernelWeightPrecomputed(Vector3r(pos[threadIdx.x].x - xj.x, pos[threadIdx.x].y - xj.y, pos[threadIdx.x].z - xj.z), kernelData);
 			v_i -= h * kSum * grad_p_j; // ki, kj already contain inverse density
 		}
 	)
@@ -665,7 +676,7 @@ void divergenceSolveUpdateFluidVelocities( /*out*/ Vector3r* const fmVelocities,
 	if(fabsf(ki) > eps)
 	{
 		forall_boundary_neighborsGPU(
-			const Vector3r grad_p_j = -boundaryVolumes[boundaryVolumeIndices[pid - nFluids] + neighborIndex] * gradKernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData);
+			const Vector3r grad_p_j = -boundaryVolumes[boundaryVolumeIndices[pid - nFluids] + neighborIndex] * gradKernelWeightPrecomputed(Vector3r(pos[threadIdx.x].x - xj.x, pos[threadIdx.x].y - xj.y, pos[threadIdx.x].z - xj.z), kernelData);
 			const Vector3r velChange = -h * (Real) 1.0 * ki * grad_p_j;	// kj already contains inverse density
 			v_i += velChange;
 			addForce(Vector3r(xj.x, xj.y, xj.z), -masses[fmIndices[fluidModelIndex] + i] * velChange * invH, forcesPerThread, torquesPerThread, rigidBodyPositions, forcesPerThreadIndices, torquesPerThreadIndices, pid - nFluids, tid);
@@ -685,11 +696,14 @@ void divergenceSolveUpdateFluidVelocities( /*out*/ Vector3r* const fmVelocities,
 	if(i >= numParticles)
 		return;
 
+	extern __shared__ Real3 pos[];
+	pos[threadIdx.x] = particles[fluidModelIndex][i];
+
 	const Real b_i = densitiesAdv[fmIndices[fluidModelIndex] + i];
 	const Real ki = b_i * factors[fmIndices[fluidModelIndex] + i];
 
 	Vector3r &v_i = fmVelocities[fmIndices[fluidModelIndex] + i];
-	const Real3 &xi = particles[fluidModelIndex][i];
+	//const Real3 &xi = particles[fluidModelIndex][i];
 
 	//////////////////////////////////////////////////////////////////////////
 	// Fluid
@@ -701,7 +715,7 @@ void divergenceSolveUpdateFluidVelocities( /*out*/ Vector3r* const fmVelocities,
 		const Real kSum = ki + densities0[pid] / densities0[fluidModelIndex] * kj;
 		if(fabsf(kSum) > eps)
 		{
-			const Vector3r grad_p_j = -fmVolumes[pid] * gradKernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData);
+			const Vector3r grad_p_j = -fmVolumes[pid] * gradKernelWeightPrecomputed(Vector3r(pos[threadIdx.x].x - xj.x, pos[threadIdx.x].y - xj.y, pos[threadIdx.x].z - xj.z), kernelData);
 			v_i -= h * kSum * grad_p_j; // ki, kj already contain inverse density
 		}
 	)
@@ -712,7 +726,7 @@ void divergenceSolveUpdateFluidVelocities( /*out*/ Vector3r* const fmVelocities,
 	if(fabsf(ki) > eps)
 	{
 		forall_boundary_neighborsGPU(
-			const Vector3r grad_p_j = -boundaryVolumes[boundaryVolumeIndices[pid - nFluids] + neighborIndex] * gradKernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData);
+			const Vector3r grad_p_j = -boundaryVolumes[boundaryVolumeIndices[pid - nFluids] + neighborIndex] * gradKernelWeightPrecomputed(Vector3r(pos[threadIdx.x].x - xj.x, pos[threadIdx.x].y - xj.y, pos[threadIdx.x].z - xj.z), kernelData);
 			const Vector3r velChange = -h * (Real) 1.0 * ki * grad_p_j;	// kj already contains inverse density
 			v_i += velChange;
 			addForce(Vector3r(xj.x, xj.y, xj.z), -masses[fmIndices[fluidModelIndex] + i] * velChange * invH, forcesPerThread, torquesPerThread, rigidBodyPositions, forcesPerThreadIndices, torquesPerThreadIndices, pid - nFluids, tid);
@@ -732,13 +746,16 @@ void pressureSolveUpdateFluidVelocities( /*out*/ Vector3r* const fmVelocities, /
 	if(i >= numParticles)
 		return;
 
+	extern __shared__ Real3 pos[];
+	pos[threadIdx.x] = particles[fluidModelIndex][i];
+	
 	const Real b_i = densitiesAdv[fmIndices[fluidModelIndex] + i] - static_cast<Real>(1.0);
 	const Real ki = b_i * factors[fmIndices[fluidModelIndex] + i];
 
 	kappa[fmIndices[fluidModelIndex] + i] += ki;
 
 	Vector3r &v_i = fmVelocities[fmIndices[fluidModelIndex] + i];
-	const Real3 &xi = particles[fluidModelIndex][i];
+	//const Real3 &xi = particles[fluidModelIndex][i];
 
 	//////////////////////////////////////////////////////////////////////////
 	// Fluid
@@ -750,7 +767,7 @@ void pressureSolveUpdateFluidVelocities( /*out*/ Vector3r* const fmVelocities, /
 		const Real kSum = ki + densities0[pid] / densities0[fluidModelIndex] * kj;
 		if(fabsf(kSum) > eps)
 		{
-			const Vector3r grad_p_j = -fmVolumes[pid] * gradKernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData);
+			const Vector3r grad_p_j = -fmVolumes[pid] * gradKernelWeightPrecomputed(Vector3r(pos[threadIdx.x].x - xj.x, pos[threadIdx.x].y - xj.y, pos[threadIdx.x].z - xj.z), kernelData);
 			v_i -= h * kSum * grad_p_j; // ki, kj already contain inverse density
 		}
 	)
@@ -761,7 +778,7 @@ void pressureSolveUpdateFluidVelocities( /*out*/ Vector3r* const fmVelocities, /
 	if(fabsf(ki) > eps)
 	{
 		forall_boundary_neighborsGPU(
-			const Vector3r grad_p_j = -boundaryVolumes[boundaryVolumeIndices[pid - nFluids] + neighborIndex] * gradKernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData);
+			const Vector3r grad_p_j = -boundaryVolumes[boundaryVolumeIndices[pid - nFluids] + neighborIndex] * gradKernelWeightPrecomputed(Vector3r(pos[threadIdx.x].x - xj.x, pos[threadIdx.x].y - xj.y, pos[threadIdx.x].z - xj.z), kernelData);
 			const Vector3r velChange = -h * (Real) 1.0 * ki * grad_p_j;	// kj already contains inverse density
 			v_i += velChange;
 			addForce(Vector3r(xj.x, xj.y, xj.z), -masses[fmIndices[fluidModelIndex] + i] * velChange * invH, forcesPerThread, torquesPerThread, rigidBodyPositions, forcesPerThreadIndices, torquesPerThreadIndices, pid - nFluids, tid);
@@ -781,11 +798,14 @@ void pressureSolveUpdateFluidVelocities( /*out*/ Vector3r* const fmVelocities, /
 	if(i >= numParticles)
 		return;
 
+	extern __shared__ Real3 pos[];
+	pos[threadIdx.x] = particles[fluidModelIndex][i];
+	
 	const Real b_i = densitiesAdv[fmIndices[fluidModelIndex] + i] - static_cast<Real>(1.0);
 	const Real ki = b_i * factors[fmIndices[fluidModelIndex] + i];
 
 	Vector3r &v_i = fmVelocities[fmIndices[fluidModelIndex] + i];
-	const Real3 &xi = particles[fluidModelIndex][i];
+	//const Real3 &xi = particles[fluidModelIndex][i];
 
 	//////////////////////////////////////////////////////////////////////////
 	// Fluid
@@ -797,7 +817,7 @@ void pressureSolveUpdateFluidVelocities( /*out*/ Vector3r* const fmVelocities, /
 		const Real kSum = ki + densities0[pid] / densities0[fluidModelIndex] * kj;
 		if(fabsf(kSum) > eps)
 		{
-			const Vector3r grad_p_j = -fmVolumes[pid] * gradKernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData);
+			const Vector3r grad_p_j = -fmVolumes[pid] * gradKernelWeightPrecomputed(Vector3r(pos[threadIdx.x].x - xj.x, pos[threadIdx.x].y - xj.y, pos[threadIdx.x].z - xj.z), kernelData);
 			v_i -= h * kSum * grad_p_j; // ki, kj already contain inverse density
 		}
 	)
@@ -808,7 +828,7 @@ void pressureSolveUpdateFluidVelocities( /*out*/ Vector3r* const fmVelocities, /
 	if(fabsf(ki) > eps)
 	{
 		forall_boundary_neighborsGPU(
-			const Vector3r grad_p_j = -boundaryVolumes[boundaryVolumeIndices[pid - nFluids] + neighborIndex] * gradKernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData);
+			const Vector3r grad_p_j = -boundaryVolumes[boundaryVolumeIndices[pid - nFluids] + neighborIndex] * gradKernelWeightPrecomputed(Vector3r(pos[threadIdx.x].x - xj.x, pos[threadIdx.x].y - xj.y, pos[threadIdx.x].z - xj.z), kernelData);
 			const Vector3r velChange = -h * (Real) 1.0 * ki * grad_p_j;	// kj already contains inverse density
 			v_i += velChange;
 			addForce(Vector3r(xj.x, xj.y, xj.z), -masses[fmIndices[fluidModelIndex] + i] * velChange * invH, forcesPerThread, torquesPerThread, rigidBodyPositions, forcesPerThreadIndices, torquesPerThreadIndices, pid - nFluids, tid);
@@ -854,9 +874,12 @@ void pressureSolveWarmstart(/*out*/ Vector3r* const fmVelocities , /* output */ 
 	{
 		const Real invH = static_cast<Real>(1.0) / h;
 
+		extern __shared__ Real3 pos[];
+		pos[threadIdx.x] = particles[fluidModelIndex][i];
+
 		Vector3r &vel = fmVelocities[fmIndices[fluidModelIndex] + i];
 		const Real &ki = kappa[fmIndices[fluidModelIndex] + i];
-		const Real3 &xi = particles[fluidModelIndex][i];
+		//const Real3 &xi = particles[fluidModelIndex][i];
 
 		//////////////////////////////////////////////////////////////////////////
 		// Fluid
@@ -867,7 +890,7 @@ void pressureSolveWarmstart(/*out*/ Vector3r* const fmVelocities , /* output */ 
 			const Real kSum = (ki + densities0[pid] / densities0[fluidModelIndex] * kj);
 			if (fabsf(kSum) > eps)
 			{
-				const Vector3r grad_p_j = -fmVolumes[pid] * gradKernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData);
+				const Vector3r grad_p_j = -fmVolumes[pid] * gradKernelWeightPrecomputed(Vector3r(pos[threadIdx.x].x - xj.x, pos[threadIdx.x].y - xj.y, pos[threadIdx.x].z - xj.z), kernelData);
 				vel -= h * kSum * grad_p_j;					// ki, kj already contain inverse density
 			}
 		)
@@ -878,7 +901,7 @@ void pressureSolveWarmstart(/*out*/ Vector3r* const fmVelocities , /* output */ 
 		if (fabsf(ki) > eps)
 		{
 			forall_boundary_neighborsGPU(
-				const Vector3r grad_p_j = -boundaryVolumes[boundaryVolumeIndices[pid - nFluids] + neighborIndex] * gradKernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData);
+				const Vector3r grad_p_j = -boundaryVolumes[boundaryVolumeIndices[pid - nFluids] + neighborIndex] * gradKernelWeightPrecomputed(Vector3r(pos[threadIdx.x].x - xj.x, pos[threadIdx.x].y - xj.y, pos[threadIdx.x].z - xj.z), kernelData);
 				const Vector3r velChange = -h * (Real) 1.0 * ki * grad_p_j;				// kj already contains inverse density
 				vel += velChange;
 				addForce(Vector3r(xj.x, xj.y, xj.z), -masses[fmIndices[fluidModelIndex] + i] * velChange * invH, forcesPerThread, torquesPerThread, rigidBodyPositions, forcesPerThreadIndices, torquesPerThreadIndices, pid - nFluids, tid);
