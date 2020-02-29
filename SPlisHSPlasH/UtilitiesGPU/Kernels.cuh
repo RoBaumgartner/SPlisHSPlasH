@@ -21,8 +21,10 @@ struct KernelData{
 	Real *d_W, *d_gradW;
 	Real radius, radius2, invStepSize;
 
+#ifdef PRECOMPUTED_KERNEL_AS_TEXTURE
 	cudaTextureObject_t texW;
 	cudaTextureObject_t texGradW;
+#endif
 
 	KernelData();
 	~KernelData();
@@ -65,7 +67,7 @@ void addForce(const Vector3r &pos, const Vector3r &f, /* output */ Vector3r* con
 
 __global__
 void computeDensitiesGPU(/*out*/ Real* const densities, const Real* const volumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, 
-	const uint* const fmIndices, const Real* const densities0, const Real W_zero, const KernelData* const kernelData, /*start of forall-parameters*/ Real3** particles, uint** neighbors, uint** neighborCounts, uint** neighborOffsets, 
+	const uint* const fmIndices, const Real* const densities0, const Real W_zero, const KernelData* const kernelData, /*start of forall-parameters*/ const Real3* const* __restrict__ particles, const uint* const* __restrict__ neighbors, const uint*  const* __restrict__ neighborCounts, const uint*  const* __restrict__ neighborOffsets, 
 	uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles);
 
 //////////////////////////////////////////////////////////////////
@@ -83,7 +85,7 @@ void updatePressureGPU(Real* const densities, const uint* const fmIndices, Real*
 void computePressureAccelsGPU( /* output */ Vector3r* const pressureAccels, /* output */ Vector3r* const forcesPerThread, /* output */ Vector3r* const torquesPerThread, const uint* const forcesPerThreadIndices, 
 	const uint* const torquesPerThreadIndices, const Real* const densities, const Real* const densities0, const uint* const fmIndices, const Real* const pressures, const Real* const masses, 
 	const Vector3r* const rigidBodyPositions, const Real* const volumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, const bool* const isDynamic, const int tid, const KernelData* kernelData,
-	/*start of forall-parameters*/ Real3** particles, uint** neighbors, uint** neighborCounts, uint** neighborOffsets, 
+	/*start of forall-parameters*/ const Real3* const* __restrict__ particles, const uint* const* __restrict__ neighbors, const uint*  const* __restrict__ neighborCounts, const uint*  const* __restrict__ neighborOffsets, 
   uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles);
 
 __global__
@@ -98,19 +100,19 @@ void updatePosPressureAccelPressureAccel(Vector3r* const positions, Vector3r* co
 __global__ 
 void computeDFSPHFactors(/* out */ Real* factors, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, const KernelData* const kernelData, 
 	const unsigned int* fmIndices, const Real* fmVolumes, const Real eps,
-	/*start of forall-parameters*/ Real3** particles, uint** neighbors, uint** neighborCounts, uint** neighborOffsets, 
+	/*start of forall-parameters*/ const Real3* const* __restrict__ particles, const uint* const* __restrict__ neighbors, const uint*  const* __restrict__ neighborCounts, const uint*  const* __restrict__ neighborOffsets, 
   uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles);
 
  __global__
 void computeDensityChanges(/* out */ Real* const densitiesAdv, const Vector3r* const fmVelocities, const Vector3r* const bmVelocities, const uint* const fmIndices, 
 	const Real* const fmVolumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, const KernelData* const kernelData,
-	/*start of forall-parameters*/ Real3** particles, uint** neighbors, uint** neighborCounts, uint** neighborOffsets, 
+	/*start of forall-parameters*/ const Real3* const* __restrict__ particles, const uint* const* __restrict__ neighbors, const uint*  const* __restrict__ neighborCounts, const uint*  const* __restrict__ neighborOffsets, 
   uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles);
 
 __global__
 void computeDensityAdvs(/*out*/ Real* const densitiesAdv, const Real* const fmDensities, const Vector3r* const fmVelocities, const Vector3r* const bmVelocities, const uint* const fmIndices, 
 	const Real* const fmVolumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, const Real* const densities0, const Real h, const KernelData* const kernelData,
-	/*start of forall-parameters*/ Real3** particles, uint** neighbors, uint** neighborCounts, uint** neighborOffsets, 
+	/*start of forall-parameters*/ const Real3* const* __restrict__ particles, const uint* const* __restrict__ neighbors, const uint*  const* __restrict__ neighborCounts, const uint*  const* __restrict__ neighborOffsets, 
   uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles);
 
 __global__
@@ -121,7 +123,7 @@ void divergenceSolveWarmstart( /*out*/ Vector3r* const fmVelocities, /* output *
 	const uint* const forcesPerThreadIndices, const uint* const torquesPerThreadIndices, const Vector3r* const rigidBodyPositions, const Real* const kappaV,
 	const uint* const fmIndices, const Real* const masses, const Real* const fmVolumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, 
 	const Real* const densities0, const bool* const isDynamic, const int tid, const Real h, const KernelData* const kernelData, const Real eps,
-	/*start of forall-parameters*/ Real3** particles, uint** neighbors, uint** neighborCounts, uint** neighborOffsets, 
+	/*start of forall-parameters*/ const Real3* const* __restrict__ particles, const uint* const* __restrict__ neighbors, const uint*  const* __restrict__ neighborCounts, const uint*  const* __restrict__ neighborOffsets, 
   uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles);
 
 __global__
@@ -135,7 +137,7 @@ void divergenceSolveUpdateFluidVelocities( /*out*/ Vector3r* const fmVelocities,
 	const uint* const forcesPerThreadIndices, const uint* const torquesPerThreadIndices, const Vector3r* const rigidBodyPositions, const Real* const densitiesAdv, const Real* const factors, 
 	const uint* const fmIndices, const Real* const masses, const Real* const fmVolumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, 
 	const Real* const densities0, const bool* const isDynamic, const int tid, const Real h, const Real invH, const KernelData* const kernelData, const Real eps,
-	/*start of forall-parameters*/ Real3** particles, uint** neighbors, uint** neighborCounts, uint** neighborOffsets, 
+	/*start of forall-parameters*/ const Real3* const* __restrict__ particles, const uint* const* __restrict__ neighbors, const uint*  const* __restrict__ neighborCounts, const uint*  const* __restrict__ neighborOffsets, 
 	uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles);
 
 __global__ 
@@ -143,7 +145,7 @@ void divergenceSolveUpdateFluidVelocities( /*out*/ Vector3r* const fmVelocities,
 	const uint* const forcesPerThreadIndices, const uint* const torquesPerThreadIndices, const Vector3r* const rigidBodyPositions, const Real* const densitiesAdv, const Real* const factors, 
 	const uint* const fmIndices, const Real* const masses, const Real* const fmVolumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, 
 	const Real* const densities0, const bool* const isDynamic, const int tid, const Real h, const Real invH, const KernelData* const kernelData, const Real eps,
-	/*start of forall-parameters*/ Real3** particles, uint** neighbors, uint** neighborCounts, uint** neighborOffsets, 
+	/*start of forall-parameters*/ const Real3* const* __restrict__ particles, const uint* const* __restrict__ neighbors, const uint*  const* __restrict__ neighborCounts, const uint*  const* __restrict__ neighborOffsets, 
 	uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles);
 
 __global__ 
@@ -151,7 +153,7 @@ void pressureSolveUpdateFluidVelocities( /*out*/ Vector3r* const fmVelocities, /
 	const uint* const forcesPerThreadIndices, const uint* const torquesPerThreadIndices, const Vector3r* const rigidBodyPositions, const Real* const densitiesAdv, const Real* const factors, 
 	const uint* const fmIndices, const Real* const masses, const Real* const fmVolumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, 
 	const Real* const densities0, const bool* const isDynamic, const int tid, const Real h, const Real invH, const KernelData* const kernelData, const Real eps,
-	/*start of forall-parameters*/ Real3** particles, uint** neighbors, uint** neighborCounts, uint** neighborOffsets, 
+	/*start of forall-parameters*/ const Real3* const* __restrict__ particles, const uint* const* __restrict__ neighbors, const uint*  const* __restrict__ neighborCounts, const uint*  const* __restrict__ neighborOffsets, 
 	uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles);
 
 __global__ 
@@ -159,7 +161,7 @@ void pressureSolveUpdateFluidVelocities( /*out*/ Vector3r* const fmVelocities, /
 	const uint* const forcesPerThreadIndices, const uint* const torquesPerThreadIndices, const Vector3r* const rigidBodyPositions, const Real* const densitiesAdv, const Real* const factors, 
 	const uint* const fmIndices, const Real* const masses, const Real* const fmVolumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, 
 	const Real* const densities0, const bool* const isDynamic, const int tid, const Real h, const Real invH, const KernelData* const kernelData, const Real eps,
-	/*start of forall-parameters*/ Real3** particles, uint** neighbors, uint** neighborCounts, uint** neighborOffsets, 
+	/*start of forall-parameters*/ const Real3* const* __restrict__ particles, const uint* const* __restrict__ neighbors, const uint*  const* __restrict__ neighborCounts, const uint*  const* __restrict__ neighborOffsets, 
   uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles);
 
 __global__
@@ -174,11 +176,68 @@ void pressureSolveWarmstart(/*out*/ Vector3r* const fmVelocities , /* output */ 
 	const uint* const forcesPerThreadIndices, const uint* const torquesPerThreadIndices, const Vector3r* const rigidBodyPositions,const Real* const kappa, 
 	const Real* const densitiesAdv, const Real* const masses, const Real* const fmVolumes, const uint* const fmIndices, const Real* const boundaryVolumes, 
 	const uint* const boundaryVolumeIndices, const Real* const densities0, const bool* const isDynamic, const int tid, const Real h, const Real eps, const KernelData* const kernelData,
-	/*start of forall-parameters*/ Real3** particles, uint** neighbors, uint** neighborCounts, uint** neighborOffsets, 
+	/*start of forall-parameters*/ const Real3* const* __restrict__ particles, const uint* const* __restrict__ neighbors, const uint*  const* __restrict__ neighborCounts, const uint*  const* __restrict__ neighborOffsets, 
   uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles);
 
 __global__
 void updateDensityErrorPressureSolve(/*out*/ Real* const density_error, const Real* const densitiesAdv, const Real* const densities0, const uint* const fmIndices,
 	const uint fluidModelIndex, const uint numParticles);
 
+
+
+
+
+
+
+
+// Fused kernels
+
+__global__
+void computeFactorsAndDensities(/*out*/ Real* const densities, /* out */ Real* factors, const Real* const fmVolumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, 
+	const uint* const fmIndices, const Real* const densities0, const Real W_zero, const Real eps, const KernelData* const kernelData, 
+	/*start of forall-parameters*/ const Real3* const* __restrict__ particles, const uint* const* __restrict__ neighbors, const uint*  const* __restrict__ neighborCounts, const uint*  const* __restrict__ neighborOffsets, 
+	uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles);
+
+__global__
+void divergenceSolveWarmstartComplete( /*out*/ Vector3r* const fmVelocities, const Vector3r* const bmVelocities, /*out*/ Real* const densitiesAdv, /* output */ Vector3r* const forcesPerThread, /* output */ Vector3r* const torquesPerThread, 
+	const uint* const forcesPerThreadIndices, const uint* const torquesPerThreadIndices, const Vector3r* const rigidBodyPositions, /* out */ Real* const kappaV,
+	const uint* const fmIndices, const Real* const masses, const Real* const fmVolumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, 
+	const Real* const densities0, const bool* const isDynamic, const int tid, const Real h, const KernelData* const kernelData, const Real eps,
+	/*start of forall-parameters*/ const Real3* const* __restrict__ particles, const uint* const* __restrict__ neighbors, const uint*  const* __restrict__ neighborCounts, const uint*  const* __restrict__ neighborOffsets, 
+	uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles);
+	
+__global__
+void divergenceSolveKernel1_WARMSTART(/*out*/ Real* const densitiesAdv, /* out */ Real* const kappaV,  /* out */ Real* const factors, const Real f, const Vector3r* const fmVelocities, const Vector3r* const bmVelocities, const uint* const fmIndices, 
+	const Real* const fmVolumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, const KernelData* const kernelData,
+	/*start of forall-parameters*/ const Real3* const* __restrict__ particles, const uint* const* __restrict__ neighbors, const uint*  const* __restrict__ neighborCounts, const uint*  const* __restrict__ neighborOffsets, 
+	uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles);
+
+__global__
+void divergenceSolveKernel1(/*out*/ Real* const densitiesAdv, /* out */ Real* const factors, const Real f, const Vector3r* const fmVelocities, const Vector3r* const bmVelocities, const uint* const fmIndices, 
+	const Real* const fmVolumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, const KernelData* const kernelData,
+	/*start of forall-parameters*/ const Real3* const* __restrict__ particles, const uint* const* __restrict__ neighbors, const uint*  const* __restrict__ neighborCounts, const uint*  const* __restrict__ neighborOffsets, 
+	uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles);
+
+__global__
+void divergenceSolveMultiply(/*out*/ Real* const kappaV, /* out */ Real* const factors, const uint* const fmIndices, const Real h, const uint fluidModelIndex, const uint numParticles);
+
+__global__
+void pressureSolveWarmstartComplete(/*out*/ Vector3r* const fmVelocities , /* output */ Vector3r* const forcesPerThread, /* output */ Vector3r* const torquesPerThread, 
+	const uint* const forcesPerThreadIndices, const uint* const torquesPerThreadIndices, const Vector3r* const rigidBodyPositions, Real* const kappa, 
+	const Real* const densitiesAdv, const Real* const masses, const Real* const fmVolumes, const uint* const fmIndices, const Real* const boundaryVolumes, 
+	const uint* const boundaryVolumeIndices, const Real* const densities0, const bool* const isDynamic, const int tid, const Real h, const Real eps, const KernelData* const kernelData,
+	/*start of forall-parameters*/ const Real3* const* __restrict__ particles, const uint* const* __restrict__ neighbors, const uint*  const* __restrict__ neighborCounts, const uint*  const* __restrict__ neighborOffsets, 
+	uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles);
+
+__global__
+void pressureSolveKernel1_WARMSTART(/*out*/ Real* const densitiesAdv, /* out */ Real* const factors, /* out */ Real* const kappa, const Real* const fmDensities, const Vector3r* const fmVelocities, const Vector3r* const bmVelocities, const uint* const fmIndices, 
+	const Real* const fmVolumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, const Real* const densities0, const Real h, const KernelData* const kernelData,
+	/*start of forall-parameters*/ const Real3* const* __restrict__ particles, const uint* const* __restrict__ neighbors, const uint*  const* __restrict__ neighborCounts, const uint*  const* __restrict__ neighborOffsets, 
+	uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles);
+
+__global__
+void pressureSolveKernel1(/*out*/ Real* const densitiesAdv, /* out */ Real* const factors, const Real* const fmDensities, const Vector3r* const fmVelocities, const Vector3r* const bmVelocities, const uint* const fmIndices, 
+	const Real* const fmVolumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, const Real* const densities0, const Real h, const KernelData* const kernelData,
+	/*start of forall-parameters*/ const Real3* const* __restrict__ particles, const uint* const* __restrict__ neighbors, const uint*  const* __restrict__ neighborCounts, const uint*  const* __restrict__ neighborOffsets, 
+	uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles);
 #endif

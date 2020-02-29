@@ -130,14 +130,14 @@ __device__
 Real kernelWeightPrecomputed(const Vector3r &r, const Real radius, cudaTextureObject_t tex)
 {
 	const float u = r.norm() / radius;
-	return static_cast<Real>(tex1D<float>(tex, u)); // TODO: https://devtalk.nvidia.com/default/topic/465851/cuda-programming-and-performance/cuda-texture/post/3310670/#3310670
+	return tex1D<Real>(tex, u); // TODO: https://devtalk.nvidia.com/default/topic/465851/cuda-programming-and-performance/cuda-texture/post/3310670/#3310670
 }
 
 __device__
 Vector3r gradKernelWeightPrecomputed(const Vector3r &r, const Real radius, cudaTextureObject_t tex)
 {
 	const float u = r.norm() / radius;
-	return static_cast<Real>(tex1D<float>(tex, u)) * r; // TODO: https://devtalk.nvidia.com/default/topic/465851/cuda-programming-and-performance/cuda-texture/post/3310670/#3310670
+	return tex1D<Real>(tex, u) * r; // TODO: https://devtalk.nvidia.com/default/topic/465851/cuda-programming-and-performance/cuda-texture/post/3310670/#3310670
 }
 
 __device__
@@ -274,7 +274,7 @@ void addForce(const Vector3r &pos, const Vector3r &f, /* output */ Vector3r* con
 __global__
 void computeDensitiesGPU(/*out*/ Real* const densities, const Real* const volumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, 
 	const uint* const fmIndices, const Real* const densities0, const Real W_zero, const KernelData* const kernelData, 
-	/*start of forall-parameters*/ Real3** particles, uint** neighbors, uint** neighborCounts, uint** neighborOffsets, 
+	/*start of forall-parameters*/ const Real3* const* __restrict__ particles, const uint* const* __restrict__ neighbors, const uint*  const* __restrict__ neighborCounts, const uint*  const* __restrict__ neighborOffsets, 
   uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles)
 {
  	// Boundary: Akinci2012
@@ -284,17 +284,14 @@ void computeDensitiesGPU(/*out*/ Real* const densities, const Real* const volume
 		return;
 
 	extern __shared__ Real densities_tmp[];
-	printf("Here is 1");
 	Real &density = densities_tmp[threadIdx.x];
 
 	density = volumes[fluidModelIndex] * W_zero;
-	const Real3 &xi = particles[fluidModelIndex][i];
+	const Real3 xi = particles[fluidModelIndex][i];
 
 	//////////////////////////////////////////////////////////////////////////
 	// Fluid
 	//////////////////////////////////////////////////////////////////////////
-	printf("Here is 2");
-
 	forall_fluid_neighborsGPU(
 		density += volumes[pid] * kernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData);
 	)
@@ -302,7 +299,6 @@ void computeDensitiesGPU(/*out*/ Real* const densities, const Real* const volume
 	//////////////////////////////////////////////////////////////////////////
 	// Boundary
 	//////////////////////////////////////////////////////////////////////////
-	printf("Here is 3");
   forall_boundary_neighborsGPU(
 		density += boundaryVolumes[boundaryVolumeIndices[pid - nFluids] + neighborIndex] *  kernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData);
 	)
@@ -351,7 +347,7 @@ __global__
 void computePressureAccelsGPU( /* output */ Vector3r* const pressureAccels, /* output */ Vector3r* const forcesPerThread, /* output */ Vector3r* const torquesPerThread, const uint* const forcesPerThreadIndices, 
 	const uint* const torquesPerThreadIndices, const Real* const densities, const Real* const densities0, const uint* const fmIndices, const Real* const pressures, const Real* const masses, 
 	const Vector3r* const rigidBodyPositions, const Real* const volumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, const bool* const isDynamic, const int tid, const KernelData* kernelData,
-	/*start of forall-parameters*/ Real3** particles, uint** neighbors, uint** neighborCounts, uint** neighborOffsets, 
+	/*start of forall-parameters*/ const Real3* const* __restrict__ particles, const uint* const* __restrict__ neighbors, const uint*  const* __restrict__ neighborCounts, const uint*  const* __restrict__ neighborOffsets, 
   uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles)
 {
    const uint i = blockIdx.x*blockDim.x + threadIdx.x;
@@ -417,15 +413,14 @@ void updatePosPressureAccelPressureAccel(Vector3r* const positions, Vector3r* co
 __global__ 
 void computeDFSPHFactors(/* out */ Real* factors, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, const KernelData* const kernelData, 
 	const unsigned int* fmIndices, const Real* fmVolumes, const Real eps,
-	/*start of forall-parameters*/ Real3** particles, uint** neighbors, uint** neighborCounts, uint** neighborOffsets, 
+	/*start of forall-parameters*/ const Real3* const* __restrict__ particles, const uint* const* __restrict__ neighbors, const uint*  const* __restrict__ neighborCounts, const uint*  const* __restrict__ neighborOffsets, 
   uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles)
 {
 	int i = blockIdx.x*blockDim.x + threadIdx.x;
 	if(i >= numParticles)
 		return;
 	
-	Real &factor = factors[fmIndices[fluidModelIndex] + i];
-	factor = 0.0;
+	Real factor;
 
 	//////////////////////////////////////////////////////////////////////////
 	// Compute gradient dp_i/dx_j * (1/k)  and dp_j/dx_j * (1/k)
@@ -462,13 +457,14 @@ forall_fluid_neighborsGPU(
 		factor = -static_cast<Real>(1.0) / (sum_grad_p_k);
 	else
 		factor = 0.0;
-}
 
+	factors[fmIndices[fluidModelIndex] + i] = factor;
+}
 
  __global__
 void computeDensityChanges(/*out*/ Real* const densitiesAdv, const Vector3r* const fmVelocities, const Vector3r* const bmVelocities, const uint* const fmIndices, 
 	const Real* const fmVolumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, const KernelData* const kernelData,
-	/*start of forall-parameters*/ Real3** particles, uint** neighbors, uint** neighborCounts, uint** neighborOffsets, 
+	/*start of forall-parameters*/ const Real3* const* __restrict__ particles, const uint* const* __restrict__ neighbors, const uint*  const* __restrict__ neighborCounts, const uint*  const* __restrict__ neighborOffsets, 
   uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles)
 {
 	int i = blockIdx.x*blockDim.x + threadIdx.x;
@@ -515,7 +511,7 @@ void computeDensityChanges(/*out*/ Real* const densitiesAdv, const Vector3r* con
 __global__
 void computeDensityAdvs(/*out*/ Real* const densitiesAdv, const Real* const fmDensities, const Vector3r* const fmVelocities, const Vector3r* const bmVelocities, const uint* const fmIndices, 
 	const Real* const fmVolumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, const Real* const densities0, const Real h, const KernelData* const kernelData,
-	/*start of forall-parameters*/ Real3** particles, uint** neighbors, uint** neighborCounts, uint** neighborOffsets, 
+	/*start of forall-parameters*/ const Real3* const* __restrict__ particles, const uint* const* __restrict__ neighbors, const uint*  const* __restrict__ neighborCounts, const uint*  const* __restrict__ neighborOffsets, 
   uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles)
 {
 	int i = blockIdx.x*blockDim.x + threadIdx.x;
@@ -563,7 +559,7 @@ void divergenceSolveWarmstart( /*out*/ Vector3r* const fmVelocities, /* output *
 	const uint* const forcesPerThreadIndices, const uint* const torquesPerThreadIndices, const Vector3r* const rigidBodyPositions, const Real* const kappaV,
 	const uint* const fmIndices, const Real* const masses, const Real* const fmVolumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, 
 	const Real* const densities0, const bool* const isDynamic, const int tid, const Real h, const KernelData* const kernelData, const Real eps,
-	/*start of forall-parameters*/ Real3** particles, uint** neighbors, uint** neighborCounts, uint** neighborOffsets, 
+	/*start of forall-parameters*/ const Real3* const* __restrict__ particles, const uint* const* __restrict__ neighbors, const uint*  const* __restrict__ neighborCounts, const uint*  const* __restrict__ neighborOffsets, 
   uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles)
 {
 	int i = blockIdx.x*blockDim.x + threadIdx.x;
@@ -630,7 +626,7 @@ void divergenceSolveUpdateFluidVelocities( /*out*/ Vector3r* const fmVelocities,
 	const uint* const forcesPerThreadIndices, const uint* const torquesPerThreadIndices, const Vector3r* const rigidBodyPositions, const Real* const densitiesAdv, const Real* const factors, 
 	const uint* const fmIndices, const Real* const masses, const Real* const fmVolumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, 
 	const Real* const densities0, const bool* const isDynamic, const int tid, const Real h, const Real invH, const KernelData* const kernelData, const Real eps,
-	/*start of forall-parameters*/ Real3** particles, uint** neighbors, uint** neighborCounts, uint** neighborOffsets, 
+	/*start of forall-parameters*/ const Real3* const* __restrict__ particles, const uint* const* __restrict__ neighbors, const uint*  const* __restrict__ neighborCounts, const uint*  const* __restrict__ neighborOffsets, 
 	uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles)
 {
  	int i = blockIdx.x*blockDim.x + threadIdx.x;
@@ -678,7 +674,7 @@ void divergenceSolveUpdateFluidVelocities( /*out*/ Vector3r* const fmVelocities,
 	const uint* const forcesPerThreadIndices, const uint* const torquesPerThreadIndices, const Vector3r* const rigidBodyPositions, const Real* const densitiesAdv, const Real* const factors, 
 	const uint* const fmIndices, const Real* const masses, const Real* const fmVolumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, 
 	const Real* const densities0, const bool* const isDynamic, const int tid, const Real h, const Real invH, const KernelData* const kernelData, const Real eps,
-	/*start of forall-parameters*/ Real3** particles, uint** neighbors, uint** neighborCounts, uint** neighborOffsets, 
+	/*start of forall-parameters*/ const Real3* const* __restrict__ particles, const uint* const* __restrict__ neighbors, const uint*  const* __restrict__ neighborCounts, const uint*  const* __restrict__ neighborOffsets, 
 	uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles)
 {
  	int i = blockIdx.x*blockDim.x + threadIdx.x;
@@ -725,7 +721,7 @@ void pressureSolveUpdateFluidVelocities( /*out*/ Vector3r* const fmVelocities, /
 	const uint* const forcesPerThreadIndices, const uint* const torquesPerThreadIndices, const Vector3r* const rigidBodyPositions, const Real* const densitiesAdv, const Real* const factors, 
 	const uint* const fmIndices, const Real* const masses, const Real* const fmVolumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, 
 	const Real* const densities0, const bool* const isDynamic, const int tid, const Real h, const Real invH, const KernelData* const kernelData, const Real eps,
-	/*start of forall-parameters*/ Real3** particles, uint** neighbors, uint** neighborCounts, uint** neighborOffsets, 
+	/*start of forall-parameters*/ const Real3* const* __restrict__ particles, const uint* const* __restrict__ neighbors, const uint*  const* __restrict__ neighborCounts, const uint*  const* __restrict__ neighborOffsets, 
   uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles)
 {
  	int i = blockIdx.x*blockDim.x + threadIdx.x;
@@ -774,7 +770,7 @@ void pressureSolveUpdateFluidVelocities( /*out*/ Vector3r* const fmVelocities, /
 	const uint* const forcesPerThreadIndices, const uint* const torquesPerThreadIndices, const Vector3r* const rigidBodyPositions, const Real* const densitiesAdv, const Real* const factors, 
 	const uint* const fmIndices, const Real* const masses, const Real* const fmVolumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, 
 	const Real* const densities0, const bool* const isDynamic, const int tid, const Real h, const Real invH, const KernelData* const kernelData, const Real eps,
-	/*start of forall-parameters*/ Real3** particles, uint** neighbors, uint** neighborCounts, uint** neighborOffsets, 
+	/*start of forall-parameters*/ const Real3* const* __restrict__ particles, const uint* const* __restrict__ neighbors, const uint*  const* __restrict__ neighborCounts, const uint*  const* __restrict__ neighborOffsets, 
   uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles)
 {
  	int i = blockIdx.x*blockDim.x + threadIdx.x;
@@ -843,7 +839,7 @@ void pressureSolveWarmstart(/*out*/ Vector3r* const fmVelocities , /* output */ 
 	const uint* const forcesPerThreadIndices, const uint* const torquesPerThreadIndices, const Vector3r* const rigidBodyPositions,const Real* const kappa, 
 	const Real* const densitiesAdv, const Real* const masses, const Real* const fmVolumes, const uint* const fmIndices, const Real* const boundaryVolumes, 
 	const uint* const boundaryVolumeIndices, const Real* const densities0, const bool* const isDynamic, const int tid, const Real h, const Real eps, const KernelData* const kernelData,
-	/*start of forall-parameters*/ Real3** particles, uint** neighbors, uint** neighborCounts, uint** neighborOffsets, 
+	/*start of forall-parameters*/ const Real3* const* __restrict__ particles, const uint* const* __restrict__ neighbors, const uint*  const* __restrict__ neighborCounts, const uint*  const* __restrict__ neighborOffsets, 
   uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles)
 {
 	int i = blockIdx.x*blockDim.x + threadIdx.x;
@@ -853,6 +849,7 @@ void pressureSolveWarmstart(/*out*/ Vector3r* const fmVelocities , /* output */ 
 	if(densitiesAdv[fmIndices[fluidModelIndex] + i] > densities0[fluidModelIndex])
 	{
 		const Real invH = static_cast<Real>(1.0) / h;
+
 
 		Vector3r &vel = fmVelocities[fmIndices[fluidModelIndex] + i];
 		const Real &ki = kappa[fmIndices[fluidModelIndex] + i];
@@ -897,4 +894,414 @@ void updateDensityErrorPressureSolve(/*out*/ Real* const density_error, const Re
 
 	//density_errors[fluidModelIndex] += densities0[fluidModelIndex] * densitiesAdv[fmIndices[fluidModelIndex] + i];
 	density_error[0] += densities0[fluidModelIndex] * densitiesAdv[fmIndices[fluidModelIndex] + i] - densities0[fluidModelIndex];
+}
+
+
+__global__
+void computeFactorsAndDensities(/*out*/ Real* const densities, /* out */ Real* factors, const Real* const fmVolumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, 
+	const uint* const fmIndices, const Real* const densities0, const Real W_zero, const Real eps, const KernelData* const kernelData, 
+	/*start of forall-parameters*/ const Real3* const* __restrict__ particles, const uint* const* __restrict__ neighbors, const uint*  const* __restrict__ neighborCounts, const uint*  const* __restrict__ neighborOffsets, 
+	uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles)
+{
+ 	// Boundary: Akinci2012
+	const uint i = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if(i >= numParticles)
+		return;
+
+	printf("In 1");
+	extern __shared__ Real3 part[];
+	printf("In 2");
+	part[threadIdx.x] = particles[fluidModelIndex][i];
+	printf("In 3");
+	const Real3 &xi = part[threadIdx.x];
+	printf("In 4");
+
+
+	Real density = fmVolumes[fluidModelIndex] * W_zero;
+	//const Real3 xi = particles[fluidModelIndex][i];
+	Real factor = 0.0;
+
+	Real sum_grad_p_k = 0.0;
+	Vector3r grad_p_i;
+	grad_p_i.setZero();
+
+	//////////////////////////////////////////////////////////////////////////
+	// Fluid
+	//////////////////////////////////////////////////////////////////////////
+	forall_fluid_neighborsGPU(
+		density += fmVolumes[pid] * kernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData);
+
+		const Vector3r grad_p_j = -fmVolumes[fluidModelIndex] * gradKernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData);
+		sum_grad_p_k += grad_p_j.squaredNorm();
+		grad_p_i -= grad_p_j;
+	)
+
+	//////////////////////////////////////////////////////////////////////////
+	// Boundary
+	//////////////////////////////////////////////////////////////////////////
+  forall_boundary_neighborsGPU(
+		density += boundaryVolumes[boundaryVolumeIndices[pid - nFluids] + neighborIndex] *  kernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData);
+
+		const Vector3r grad_p_j = -boundaryVolumes[boundaryVolumeIndices[pid - nFluids] + neighborIndex] * gradKernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData);
+		grad_p_i -= grad_p_j;
+	)
+
+	density *= densities0[fluidModelIndex];
+	densities[fmIndices[fluidModelIndex] + i] = density;
+
+	sum_grad_p_k += grad_p_i.squaredNorm();
+
+	//////////////////////////////////////////////////////////////////////////
+	// Compute pressure stiffness denominator
+	//////////////////////////////////////////////////////////////////////////
+	if (sum_grad_p_k > eps)
+		factor = -static_cast<Real>(1.0) / (sum_grad_p_k);
+	else
+		factor = 0.0;
+
+	factors[fmIndices[fluidModelIndex] + i] = factor;
+}
+
+__global__
+void divergenceSolveWarmstartComplete( /*out*/ Vector3r* const fmVelocities, const Vector3r* const bmVelocities, /*out*/ Real* const densitiesAdv, /* output */ Vector3r* const forcesPerThread, /* output */ Vector3r* const torquesPerThread, 
+	const uint* const forcesPerThreadIndices, const uint* const torquesPerThreadIndices, const Vector3r* const rigidBodyPositions, /* out */ Real* const kappaV,
+	const uint* const fmIndices, const Real* const masses, const Real* const fmVolumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, 
+	const Real* const densities0, const bool* const isDynamic, const int tid, const Real h, const KernelData* const kernelData, const Real eps,
+	/*start of forall-parameters*/ const Real3* const* __restrict__ particles, const uint* const* __restrict__ neighbors, const uint*  const* __restrict__ neighborCounts, const uint*  const* __restrict__ neighborOffsets, 
+  uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles)
+{
+	int i = blockIdx.x*blockDim.x + threadIdx.x;
+	if(i >= numParticles || numParticles == 0)
+		return;
+
+	extern __shared__ Real3 part[];
+	part[threadIdx.x] = particles[fluidModelIndex][i];
+	const Real3 &xi = part[threadIdx.x];
+
+	const Real invH = static_cast<Real>(1.0) / h;
+	Real &ki = kappaV[fmIndices[fluidModelIndex] + i];
+	ki = static_cast<Real>(0.5) * max( kappaV[fmIndices[fluidModelIndex] + i] * invH, -static_cast<Real>(0.5) * densities0[fluidModelIndex] * densities0[fluidModelIndex]);
+	//_syncthreads(); // TODO: something seems shady with the kappaV. Is syncthreads() necessary here?
+
+	//const Real3 &xi = particles[fluidModelIndex][i];
+	Vector3r &vi = fmVelocities[fmIndices[fluidModelIndex] + i];
+
+	Real densityAdv = 0.0;
+	unsigned int numNeighbors = 0;
+
+	//////////////////////////////////////////////////////////////////////////
+	// Fluid
+	//////////////////////////////////////////////////////////////////////////
+	forall_fluid_neighborsGPU(
+		const Real kj = kappaV[fmIndices[pid] + neighborIndex];
+
+		const Real kSum = (ki + densities0[pid] / densities0[fluidModelIndex] * kj);
+		if (fabsf(kSum) > eps)
+		{
+			const Vector3r grad_p_j = -fmVolumes[pid] * gradKernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData);
+			vi -= h * kSum * grad_p_j;					// ki, kj already contain inverse density
+		}
+
+		const Vector3r &vj = fmVelocities[fmIndices[pid] + neighborIndex];
+		densityAdv += fmVolumes[pid] * (vi - vj).dot(gradKernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData));
+	)
+
+	//////////////////////////////////////////////////////////////////////////
+	// Boundary
+	//////////////////////////////////////////////////////////////////////////
+
+	forall_boundary_neighborsGPU(
+		const Vector3r &vj = bmVelocities[boundaryVolumeIndices[pid - nFluids] + neighborIndex];
+		densityAdv += boundaryVolumes[boundaryVolumeIndices[pid - nFluids] + neighborIndex] * (vi - vj).dot(gradKernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData));
+		
+		if (fabsf(ki) > eps)
+		{
+			const Vector3r grad_p_j = -boundaryVolumes[boundaryVolumeIndices[pid - nFluids] + neighborIndex] * gradKernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData);
+			const Vector3r velChange = -h * (Real) 1.0 * ki * grad_p_j;				// kj already contains inverse density
+			vi += velChange;
+			addForce(Vector3r(xj.x, xj.y, xj.z), -masses[fmIndices[fluidModelIndex] + i] * velChange * invH, forcesPerThread, torquesPerThread, rigidBodyPositions, forcesPerThreadIndices, torquesPerThreadIndices, pid - nFluids, tid);
+		}
+	)
+
+	// only correct positive divergence
+	densityAdv = max(densityAdv, static_cast<Real>(0.0));
+
+	for (unsigned int pid = 0; pid < nPointSets; pid++)
+	{
+		const uint neighborsetIndex = neighborPointsetIndices[fluidModelIndex] + pid;
+		numNeighbors += neighborCounts[neighborsetIndex][i];
+	}
+	
+	// in case of particle deficiency do not perform a divergence solve
+	if (numNeighbors < 20)
+		densityAdv = 0.0;
+
+		densitiesAdv[fmIndices[fluidModelIndex] + i] = densityAdv;
+}
+
+
+__global__
+void divergenceSolveKernel1(/*out*/ Real* const densitiesAdv, /* out */ Real* const factors, const Real f, const Vector3r* const fmVelocities, const Vector3r* const bmVelocities, const uint* const fmIndices, 
+	const Real* const fmVolumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, const KernelData* const kernelData,
+	/*start of forall-parameters*/ const Real3* const* __restrict__ particles, const uint* const* __restrict__ neighbors, const uint*  const* __restrict__ neighborCounts, const uint*  const* __restrict__ neighborOffsets, 
+  uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles)
+{
+	int i = blockIdx.x*blockDim.x + threadIdx.x;
+	if(i >= numParticles)
+		return;
+
+	extern __shared__ Real3 part[];
+	part[threadIdx.x] = particles[fluidModelIndex][i];
+	const Real3 &xi = part[threadIdx.x];
+
+	Real &densityAdv = densitiesAdv[fmIndices[fluidModelIndex] + i];	
+	//const Real3 &xi = particles[fluidModelIndex][i];
+	const Vector3r &vi = fmVelocities[fmIndices[fluidModelIndex] + i];
+
+	densityAdv = 0.0;
+	unsigned int numNeighbors = 0;
+
+	//////////////////////////////////////////////////////////////////////////
+	// Fluid
+	//////////////////////////////////////////////////////////////////////////
+	forall_fluid_neighborsGPU(
+		const Vector3r &vj = fmVelocities[fmIndices[pid] + neighborIndex];
+		densityAdv += fmVolumes[pid] * (vi - vj).dot(gradKernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData));
+	)
+
+	//////////////////////////////////////////////////////////////////////////
+	// Boundary
+	//////////////////////////////////////////////////////////////////////////
+	forall_boundary_neighborsGPU(
+		const Vector3r &vj = bmVelocities[boundaryVolumeIndices[pid - nFluids] + neighborIndex];
+		densityAdv += boundaryVolumes[boundaryVolumeIndices[pid - nFluids] + neighborIndex] * (vi - vj).dot(gradKernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData));
+	)
+	
+	// only correct positive divergence
+	densityAdv = max(densityAdv, static_cast<Real>(0.0));
+
+	for (unsigned int pid = 0; pid < nPointSets; pid++)
+	{
+		const uint neighborsetIndex = neighborPointsetIndices[fluidModelIndex] + pid;
+		numNeighbors += neighborCounts[neighborsetIndex][i];
+	}
+
+	// in case of particle deficiency do not perform a divergence solve
+	if (numNeighbors < 20)
+		densityAdv = 0.0;
+
+	factors[fmIndices[fluidModelIndex] + i] *= f;
+}
+
+__global__
+void divergenceSolveKernel1_WARMSTART(/*out*/ Real* const densitiesAdv, /* out */ Real* const kappaV,  /* out */ Real* const factors, const Real f, const Vector3r* const fmVelocities, const Vector3r* const bmVelocities, const uint* const fmIndices, 
+	const Real* const fmVolumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, const KernelData* const kernelData,
+	/*start of forall-parameters*/ const Real3* const* __restrict__ particles, const uint* const* __restrict__ neighbors, const uint*  const* __restrict__ neighborCounts, const uint*  const* __restrict__ neighborOffsets, 
+  uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles)
+{
+	int i = blockIdx.x*blockDim.x + threadIdx.x;
+	if(i >= numParticles)
+		return;
+
+	extern __shared__ Real3 part[];
+	part[threadIdx.x] = particles[fluidModelIndex][i];
+	const Real3 &xi = part[threadIdx.x];
+
+	kappaV[fmIndices[fluidModelIndex] + i] = 0.0;
+
+	Real &densityAdv = densitiesAdv[fmIndices[fluidModelIndex] + i];	
+	//const Real3 &xi = particles[fluidModelIndex][i];
+	const Vector3r &vi = fmVelocities[fmIndices[fluidModelIndex] + i];
+
+	densityAdv = 0.0;
+	unsigned int numNeighbors = 0;
+
+	//////////////////////////////////////////////////////////////////////////
+	// Fluid
+	//////////////////////////////////////////////////////////////////////////
+	forall_fluid_neighborsGPU(
+		const Vector3r &vj = fmVelocities[fmIndices[pid] + neighborIndex];
+		densityAdv += fmVolumes[pid] * (vi - vj).dot(gradKernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData));
+	)
+
+	//////////////////////////////////////////////////////////////////////////
+	// Boundary
+	//////////////////////////////////////////////////////////////////////////
+	forall_boundary_neighborsGPU(
+		const Vector3r &vj = bmVelocities[boundaryVolumeIndices[pid - nFluids] + neighborIndex];
+		densityAdv += boundaryVolumes[boundaryVolumeIndices[pid - nFluids] + neighborIndex] * (vi - vj).dot(gradKernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData));
+	)
+	
+	// only correct positive divergence
+	densityAdv = max(densityAdv, static_cast<Real>(0.0));
+
+	for (unsigned int pid = 0; pid < nPointSets; pid++)
+	{
+		const uint neighborsetIndex = neighborPointsetIndices[fluidModelIndex] + pid;
+		numNeighbors += neighborCounts[neighborsetIndex][i];
+	}
+
+	// in case of particle deficiency do not perform a divergence solve
+	if (numNeighbors < 20)
+		densityAdv = 0.0;
+
+	factors[fmIndices[fluidModelIndex] + i] *= f;
+}
+
+__global__
+void divergenceSolveMultiply(/*out*/ Real* const kappaV, /* out */ Real* const factors, const uint* const fmIndices, const Real h, const uint fluidModelIndex, const uint numParticles)
+{
+	int i = blockIdx.x*blockDim.x + threadIdx.x;
+	if(i >= numParticles)
+		return;
+
+	kappaV[fmIndices[fluidModelIndex] + i] *= h;
+	factors[fmIndices[fluidModelIndex] + i] *= h;
+}
+
+__global__
+void pressureSolveWarmstartComplete(/*out*/ Vector3r* const fmVelocities , /* output */ Vector3r* const forcesPerThread, /* output */ Vector3r* const torquesPerThread, 
+	const uint* const forcesPerThreadIndices, const uint* const torquesPerThreadIndices, const Vector3r* const rigidBodyPositions, Real* const kappa, 
+	const Real* const densitiesAdv, const Real* const masses, const Real* const fmVolumes, const uint* const fmIndices, const Real* const boundaryVolumes, 
+	const uint* const boundaryVolumeIndices, const Real* const densities0, const bool* const isDynamic, const int tid, const Real h, const Real eps, const KernelData* const kernelData,
+	/*start of forall-parameters*/ const Real3* const* __restrict__ particles, const uint* const* __restrict__ neighbors, const uint*  const* __restrict__ neighborCounts, const uint*  const* __restrict__ neighborOffsets, 
+  uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles)
+{
+	int i = blockIdx.x*blockDim.x + threadIdx.x;
+	if(i >= numParticles)
+		return;
+
+	if(densitiesAdv[fmIndices[fluidModelIndex] + i] > densities0[fluidModelIndex])
+	{
+		const Real invH = static_cast<Real>(1.0) / h;
+		const Real invH2 = static_cast<Real>(1.0) / (h*h);
+
+		extern __shared__ Real3 part[];
+		part[threadIdx.x] = particles[fluidModelIndex][i];
+		const Real3 &xi = part[threadIdx.x];
+
+		Vector3r &vel = fmVelocities[fmIndices[fluidModelIndex] + i];
+		Real &ki = kappa[fmIndices[fluidModelIndex] + i];
+		//const Real3 &xi = particles[fluidModelIndex][i];
+
+		ki = max( kappa[fmIndices[fluidModelIndex] + i] * invH2, -static_cast<Real>(0.5) * densities0[fluidModelIndex] * densities0[fluidModelIndex]);
+
+		//////////////////////////////////////////////////////////////////////////
+		// Fluid
+		//////////////////////////////////////////////////////////////////////////
+		forall_fluid_neighborsGPU(
+			const Real kj = kappa[fmIndices[pid] + neighborIndex];
+
+			const Real kSum = (ki + densities0[pid] / densities0[fluidModelIndex] * kj);
+			if (fabsf(kSum) > eps)
+			{
+				const Vector3r grad_p_j = -fmVolumes[pid] * gradKernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData);
+				vel -= h * kSum * grad_p_j;					// ki, kj already contain inverse density
+			}
+		)
+
+		//////////////////////////////////////////////////////////////////////////
+		// Boundary
+		//////////////////////////////////////////////////////////////////////////
+		if (fabsf(ki) > eps)
+		{
+			forall_boundary_neighborsGPU(
+				const Vector3r grad_p_j = -boundaryVolumes[boundaryVolumeIndices[pid - nFluids] + neighborIndex] * gradKernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData);
+				const Vector3r velChange = -h * (Real) 1.0 * ki * grad_p_j;				// kj already contains inverse density
+				vel += velChange;
+				addForce(Vector3r(xj.x, xj.y, xj.z), -masses[fmIndices[fluidModelIndex] + i] * velChange * invH, forcesPerThread, torquesPerThread, rigidBodyPositions, forcesPerThreadIndices, torquesPerThreadIndices, pid - nFluids, tid);
+			)
+		}
+	}
+}
+
+__global__
+void pressureSolveKernel1_WARMSTART(/*out*/ Real* const densitiesAdv, /* out */ Real* const factors, /* out */ Real* const kappa, const Real* const fmDensities, const Vector3r* const fmVelocities, const Vector3r* const bmVelocities, const uint* const fmIndices, 
+	const Real* const fmVolumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, const Real* const densities0, const Real h, const KernelData* const kernelData,
+	/*start of forall-parameters*/ const Real3* const* __restrict__ particles, const uint* const* __restrict__ neighbors, const uint*  const* __restrict__ neighborCounts, const uint*  const* __restrict__ neighborOffsets, 
+  uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles)
+{
+	int i = blockIdx.x*blockDim.x + threadIdx.x;
+	if(i >= numParticles)
+		return;
+
+	extern __shared__ Real3 part[];
+	part[threadIdx.x] = particles[fluidModelIndex][i];
+	const Real3 &xi = part[threadIdx.x];
+
+	const Real invH2 = static_cast<Real>(1.0) / (h*h);
+	factors[fmIndices[fluidModelIndex] + i] *= invH2;
+
+	kappa[fmIndices[fluidModelIndex] + i] = 0.0;
+
+	const Real &density = fmDensities[fmIndices[fluidModelIndex] + i];
+	//const Real3 &xi = particles[fluidModelIndex][i];
+	const Vector3r &vi = fmVelocities[fmIndices[fluidModelIndex] + i];
+	Real delta = 0.0;
+
+	//////////////////////////////////////////////////////////////////////////
+	// Fluid
+	//////////////////////////////////////////////////////////////////////////
+	forall_fluid_neighborsGPU(
+		const Vector3r &vj = fmVelocities[fmIndices[pid] + neighborIndex];
+		delta += fmVolumes[pid] * (vi - vj).dot(gradKernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData));
+	)
+
+	//////////////////////////////////////////////////////////////////////////
+	// Boundary
+	//////////////////////////////////////////////////////////////////////////
+	forall_boundary_neighborsGPU(
+		const Vector3r &vj = bmVelocities[boundaryVolumeIndices[pid - nFluids] + neighborIndex];
+		delta += boundaryVolumes[boundaryVolumeIndices[pid - nFluids] + neighborIndex] * (vi - vj).dot(gradKernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData));
+	)
+	
+	Real densityAdv = density / densities0[fluidModelIndex] + h*delta;
+	densityAdv = max(densityAdv, static_cast<Real>(1.0));
+
+	densitiesAdv[fmIndices[fluidModelIndex] + i] = densityAdv;
+}
+
+__global__
+void pressureSolveKernel1(/*out*/ Real* const densitiesAdv, /* out */ Real* const factors, const Real* const fmDensities, const Vector3r* const fmVelocities, const Vector3r* const bmVelocities, const uint* const fmIndices, 
+	const Real* const fmVolumes, const Real* const boundaryVolumes, const uint* const boundaryVolumeIndices, const Real* const densities0, const Real h, const KernelData* const kernelData,
+	/*start of forall-parameters*/ const Real3* const* __restrict__ particles, const uint* const* __restrict__ neighbors, const uint*  const* __restrict__ neighborCounts, const uint*  const* __restrict__ neighborOffsets, 
+  uint* neighborPointsetIndices, const uint nFluids, const uint nPointSets, const uint fluidModelIndex, const uint numParticles)
+{
+	int i = blockIdx.x*blockDim.x + threadIdx.x;
+	if(i >= numParticles)
+		return;
+
+	extern __shared__ Real3 part[];
+	part[threadIdx.x] = particles[fluidModelIndex][i];
+	const Real3 &xi = part[threadIdx.x];
+
+	const Real invH2 = static_cast<Real>(1.0) / (h*h);
+	factors[fmIndices[fluidModelIndex] + i] *= invH2;
+
+	const Real &density = fmDensities[fmIndices[fluidModelIndex] + i];
+	//const Real3 &xi = particles[fluidModelIndex][i];
+	const Vector3r &vi = fmVelocities[fmIndices[fluidModelIndex] + i];
+	Real delta = 0.0;
+
+	//////////////////////////////////////////////////////////////////////////
+	// Fluid
+	//////////////////////////////////////////////////////////////////////////
+	forall_fluid_neighborsGPU(
+		const Vector3r &vj = fmVelocities[fmIndices[pid] + neighborIndex];
+		delta += fmVolumes[pid] * (vi - vj).dot(gradKernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData));
+	)
+
+	//////////////////////////////////////////////////////////////////////////
+	// Boundary
+	//////////////////////////////////////////////////////////////////////////
+	forall_boundary_neighborsGPU(
+		const Vector3r &vj = bmVelocities[boundaryVolumeIndices[pid - nFluids] + neighborIndex];
+		delta += boundaryVolumes[boundaryVolumeIndices[pid - nFluids] + neighborIndex] * (vi - vj).dot(gradKernelWeightPrecomputed(Vector3r(xi.x - xj.x, xi.y - xj.y, xi.z - xj.z), kernelData));
+	)
+	
+	Real densityAdv = density / densities0[fluidModelIndex] + h*delta;
+	densityAdv = max(densityAdv, static_cast<Real>(1.0));
+
+	densitiesAdv[fmIndices[fluidModelIndex] + i] = densityAdv;
 }
