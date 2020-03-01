@@ -75,6 +75,16 @@ void CudaHelper::CudaMalloc(void** src, size_t size)
 	}
 }
 
+void CudaHelper::CudaMallocHost(void** src, size_t size)
+{
+	cudaError_t cudaStatus = cudaMallocHost(src, size);
+	if (cudaStatus != cudaSuccess)
+	{
+		printf("Error: %s : ", cudaGetErrorString(cudaStatus));
+		throw cudaErrorMemoryAllocation;
+	}
+}
+
 void CudaHelper::CudaFree(void* src)
 {
 	cudaError_t cudaStatus = cudaFree(src);

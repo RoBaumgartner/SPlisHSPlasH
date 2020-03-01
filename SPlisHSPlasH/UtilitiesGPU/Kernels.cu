@@ -710,9 +710,9 @@ void divergenceSolveWarmstartComplete( /*out*/ Vector3r* const fmVelocities, con
 	const Real3 &xi = part[threadIdx.x];
 
 	const Real invH = static_cast<Real>(1.0) / h;
-	Real &ki = kappaV[fmIndices[fluidModelIndex] + i];
-	ki = static_cast<Real>(0.5) * max( kappaV[fmIndices[fluidModelIndex] + i] * invH, -static_cast<Real>(0.5) * densities0[fluidModelIndex] * densities0[fluidModelIndex]);
-	//_syncthreads(); // TODO: something seems shady with the kappaV. Is syncthreads() necessary here?
+
+	Real ki = static_cast<Real>(0.5) * max( kappaV[fmIndices[fluidModelIndex] + i] * invH, -static_cast<Real>(0.5) * densities0[fluidModelIndex] * densities0[fluidModelIndex]);
+	kappaV[fmIndices[fluidModelIndex] + i] = ki;
 
 	Vector3r vi = fmVelocities[fmIndices[fluidModelIndex] + i];
 
@@ -786,7 +786,7 @@ void divergenceSolveKernel1(/*out*/ Real* const densitiesAdv, /* out */ Real* co
 	part[threadIdx.x] = particles[fluidModelIndex][i];
 	const Real3 &xi = part[threadIdx.x];
 
-	const Vector3r &vi = fmVelocities[fmIndices[fluidModelIndex] + i];
+	const Vector3r vi = fmVelocities[fmIndices[fluidModelIndex] + i];
 
 	Real densityAdv = 0.0;
 	unsigned int numNeighbors = 0;
@@ -840,7 +840,7 @@ void divergenceSolveKernel1(/*out*/ Real* const densitiesAdv, /* out */ Real* co
 
 	kappaV[fmIndices[fluidModelIndex] + i] = 0.0;
 
-	const Vector3r &vi = fmVelocities[fmIndices[fluidModelIndex] + i];
+	const Vector3r vi = fmVelocities[fmIndices[fluidModelIndex] + i];
 
 	Real densityAdv = 0.0;
 	unsigned int numNeighbors = 0;
@@ -903,7 +903,7 @@ void divergenceSolveKernel2(/*out*/ Real* const densitiesAdv, /* out */ Real* co
 	extern __shared__ Real3 part[];
 	part[threadIdx.x] = particles[fluidModelIndex][i];
 	const Real3 &xi = part[threadIdx.x];
-	const Vector3r &vi = fmVelocities[fmIndices[fluidModelIndex] + i];
+	const Vector3r vi = fmVelocities[fmIndices[fluidModelIndex] + i];
 
 	Real densityAdv = 0.0;
 	unsigned int numNeighbors = 0;
@@ -964,9 +964,9 @@ void pressureSolveWarmstartComplete(/*out*/ Vector3r* const fmVelocities , /* ou
 		const Real3 &xi = part[threadIdx.x];
 
 		Vector3r vel = fmVelocities[fmIndices[fluidModelIndex] + i];
-		Real &ki = kappa[fmIndices[fluidModelIndex] + i];
 
-		ki = max( kappa[fmIndices[fluidModelIndex] + i] * invH2, -static_cast<Real>(0.5) * densities0[fluidModelIndex] * densities0[fluidModelIndex]);
+		const Real ki = max( kappa[fmIndices[fluidModelIndex] + i] * invH2, -static_cast<Real>(0.5) * densities0[fluidModelIndex] * densities0[fluidModelIndex]);
+		kappa[fmIndices[fluidModelIndex] + i] = ki;
 
 		//////////////////////////////////////////////////////////////////////////
 		// Fluid
@@ -1018,9 +1018,8 @@ void pressureSolveKernel1(/*out*/ Real* const densitiesAdv, /* out */ Real* cons
 
 	kappa[fmIndices[fluidModelIndex] + i] = 0.0;
 
-	const Real &density = fmDensities[fmIndices[fluidModelIndex] + i];
-	//const Real3 &xi = particles[fluidModelIndex][i];
-	const Vector3r &vi = fmVelocities[fmIndices[fluidModelIndex] + i];
+	const Real density = fmDensities[fmIndices[fluidModelIndex] + i];
+	const Vector3r vi = fmVelocities[fmIndices[fluidModelIndex] + i];
 	Real delta = 0.0;
 
 	//////////////////////////////////////////////////////////////////////////
@@ -1062,9 +1061,8 @@ void pressureSolveKernel1(/*out*/ Real* const densitiesAdv, /* out */ Real* cons
 	const Real invH2 = static_cast<Real>(1.0) / (h*h);
 	factors[fmIndices[fluidModelIndex] + i] *= invH2;
 
-	const Real &density = fmDensities[fmIndices[fluidModelIndex] + i];
-	//const Real3 &xi = particles[fluidModelIndex][i];
-	const Vector3r &vi = fmVelocities[fmIndices[fluidModelIndex] + i];
+	const Real density = fmDensities[fmIndices[fluidModelIndex] + i];
+	const Vector3r vi = fmVelocities[fmIndices[fluidModelIndex] + i];
 	Real delta = 0.0;
 
 	//////////////////////////////////////////////////////////////////////////
@@ -1103,8 +1101,8 @@ void pressureSolveKernel2(/*out*/ Real* const densitiesAdv, /*out*/ Real* const 
 	part[threadIdx.x] = particles[fluidModelIndex][i];
 	const Real3 &xi = part[threadIdx.x];
 
-	const Real &density = fmDensities[fmIndices[fluidModelIndex] + i];
-	const Vector3r &vi = fmVelocities[fmIndices[fluidModelIndex] + i];
+	const Real density = fmDensities[fmIndices[fluidModelIndex] + i];
+	const Vector3r vi = fmVelocities[fmIndices[fluidModelIndex] + i];
 	Real delta = 0.0;
 
 	//////////////////////////////////////////////////////////////////////////

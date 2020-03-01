@@ -85,6 +85,16 @@ public:
 		CudaMalloc((void**)src, elements * sizeof(T));
 	}
 
+	static void CudaMallocHost(void** src, size_t size);
+
+	/** Reserve memory for data structures on device.
+	 */ 
+	template<typename T>
+	static void CudaMallocHost(T** src, size_t elements)
+	{
+		CudaMallocHost((void**)src, elements * sizeof(T));
+	}
+
 	static void CudaFree(void* src);
 
 	/** Reserve memory for data structures on device.
